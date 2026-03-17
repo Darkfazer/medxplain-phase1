@@ -1,0 +1,51 @@
+# Default Model Selection
+default_model: "resnet50"
+
+# Hyperparameters applied across all models unless overridden
+training_defaults:
+  batch_size: 32
+  epochs: 30
+  learning_rate: 0.00001
+  weight_decay: 0.00001
+  mixed_precision: true     # Use PyTorch AMP
+  gradient_accumulation_steps: 1
+  early_stopping_patience: 5
+
+models:
+  # --- CNN Models ---
+  resnet50:
+    weights: "IMAGENET1K_V2"
+    drop_rate: 0.3
+    # Optional override:
+    # batch_size: 64
+
+  densenet121:
+    weights: "IMAGENET1K_V1"
+    drop_rate: 0.3
+
+  efficientnet_b4:
+    weights: "IMAGENET1K_V1"
+    drop_rate: 0.4
+
+  # --- Transformer Models ---
+  vit_base_patch16_224:
+    weights: "IMAGENET1K_V1" # or use timm auto string
+    learning_rate: 0.00005   # ViTs usually need lower LR
+    batch_size: 16
+
+  swin_base_patch4_window7_224:
+    weights: "IMAGENET1K_V1"
+    learning_rate: 0.00005
+    batch_size: 16
+    
+  deit_base_patch16_224:
+    weights: "IMAGENET1K_V1"
+    learning_rate: 0.00005
+    batch_size: 16
+
+  # --- Medical Specific Models ---
+  torchxray_densenet121:
+    weights: "densenet121-res224-all" # TorchXRayVision string
+    
+  medvit_base:
+    weights: "path/to/medvit/checkpoint.pth" # Placeholder

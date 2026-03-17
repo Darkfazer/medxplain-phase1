@@ -1,0 +1,77 @@
+--- ACCURACY DIAGNOSTIC REPORT ---
+
+Overall Exact Match Accuracy (Actual): 5.00%
+
+
+--- Per-Class Metrics ---
+                    precision    recall  f1-score   support
+
+       Atelectasis       0.00      0.00      0.00        12
+      Cardiomegaly       0.75      0.86      0.80         7
+          Effusion       0.00      0.00      0.00         9
+      Infiltration       1.00      0.88      0.93         8
+              Mass       0.00      0.00      0.00        20
+            Nodule       0.00      0.00      0.00        12
+         Pneumonia       0.00      0.00      0.00        14
+      Pneumothorax       0.00      0.00      0.00         9
+     Consolidation       0.00      0.00      0.00         9
+             Edema       0.00      0.00      0.00        13
+         Emphysema       0.00      0.00      0.00        16
+          Fibrosis       0.00      0.00      0.00        11
+Pleural_Thickening       0.00      0.00      0.00        13
+            Hernia       0.00      0.00      0.00         6
+
+         micro avg       0.87      0.08      0.15       159
+         macro avg       0.12      0.12      0.12       159
+      weighted avg       0.08      0.08      0.08       159
+       samples avg       0.12      0.10      0.10       159
+
+
+--- Confusion Matrices (Top Confused Classes) ---
+Atelectasis:
+  TN:88 FP:0
+  FN:12 TP:0
+
+Effusion:
+  TN:91 FP:0
+  FN:9 TP:0
+
+Mass:
+  TN:80 FP:0
+  FN:20 TP:0
+
+Nodule:
+  TN:88 FP:0
+  FN:12 TP:0
+
+Pneumonia:
+  TN:86 FP:0
+  FN:14 TP:0
+
+Pneumothorax:
+  TN:91 FP:0
+  FN:9 TP:0
+
+Consolidation:
+  TN:91 FP:0
+  FN:9 TP:0
+
+Edema:
+  TN:87 FP:0
+  FN:13 TP:0
+
+Emphysema:
+  TN:84 FP:0
+  FN:16 TP:0
+
+Fibrosis:
+  TN:89 FP:0
+  FN:11 TP:0
+
+Pleural_Thickening:
+  TN:87 FP:0
+  FN:13 TP:0
+
+Hernia:
+  TN:94 FP:0
+  FN:6 TP:0
