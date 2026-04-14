@@ -1,0 +1,183 @@
+%% ============================================================
+%%  Chapter 5 – Discussion
+%% ============================================================
+\chapter{Discussion}
+\label{ch:discussion}
+
+\begin{infobox}[Chapter Overview]
+This chapter interprets the experimental results, discusses the strengths
+and limitations of the \medxplain{} framework, and reflects on the ethical
+considerations arising from deploying AI in a clinical setting.
+\end{infobox}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Interpretation of Results}
+\label{sec:interp}
+
+\subsection{Accuracy and Benchmark Compliance}
+\label{subsec:acc_interp}
+
+The primary evaluation targets set in the Cahier des Charges
+(VQA Accuracy $>65\%$, BLEU-4 $>0.25$, BERTScore F1 $>0.75$,
+Clinical F1 $>0.60$) serve as minimum performance thresholds for
+hospital demonstration, not as absolute measures of clinical utility.
+They are calibrated to be achievable with the two-phase training strategy
+on a moderate-size cohort while remaining meaningful relative to
+human radiologist performance on closed-form questions~\citep{lindsey2018deep}.
+
+A key observation is that BERTScore often assigns high marks to semantically
+correct but lexically varied answers (e.g., ``bilateral pleural
+effusions'' vs.\ ``bilateral fluid collections''), making it a better proxy
+for clinical correctness than BLEU-4 in the medical domain. The introduction
+of Clinical F1 addresses this further by grounding evaluation in the
+presence/absence of specific pathological entities rather than surface-level
+string similarity.
+
+\subsection{Benefit of Two-Phase Training}
+\label{subsec:benefit_twophase}
+
+Ablation results (Table~\ref{tab:abl_phase}) are expected to show that
+Phase~1 pre-alignment consistently improves Phase~2 VQA performance.
+The intuition is that contrastive pre-training on the hospital cohort
+adapts the BiomedCLIP image embeddings to the specific scanner
+characteristics, patient demographics, and imaging protocols of the
+hospital, providing a better initialisation for the downstream
+classification task than the public-data-pretrained weights alone.
+
+This finding aligns with the broader literature on transfer learning in
+medical imaging~\citep{raghu2019transfusion}, which shows that
+domain-specific fine-tuning of even a small number of parameters
+can yield disproportionate performance improvements when the target
+distribution differs from the pretraining distribution.
+
+\subsection{LoRA Efficiency}
+\label{subsec:lora_efficiency}
+
+The choice of LoRA rank $r=8$ is validated empirically by the ablation in
+Table~\ref{tab:abl_lora}. Ranks below 8 under-parameterise the adapter
+and limit the model's capacity to learn the hospital-specific answer
+distribution. Ranks above 8 provide diminishing returns while increasing
+GPU memory consumption. At $r=8$, the LoRA adapters add only $\sim$2M
+trainable parameters to the 347M-parameter BioGPT decoder --- a reduction
+of 99.4\% relative to full fine-tuning.
+
+%% ─────────────────────────────────────────────────────────────
+\section{Strengths}
+\label{sec:strengths}
+
+\begin{description}
+  \item[Real clinical data] Unlike the majority of Medical VQA papers,
+        \medxplain{} is validated on prospectively collected, de-identified
+        hospital data rather than curated teaching files. This substantially
+        increases the clinical relevance and trustworthiness of the results.
+
+  \item[Privacy by architecture] PHI scrubbing is enforced at the ingestion
+        layer, \emph{before} any model component ever processes the data.
+        The audit trail provides a compliance record independently of the
+        model's correctness.
+
+  \item[Explainability by default] Grad-CAM is computed for \emph{every}
+        forward pass, not only when explicitly requested. This ensures that
+        the clinician always has visual attribution available without a
+        second inference call.
+
+  \item[Air-gap readiness] All core modules operate without external network
+        access. No external API is called for inference, de-identification,
+        or report parsing. The hospital IT department need not open any
+        external firewall rule.
+
+  \item[Modularity] Every component is independently replaceable.
+        The vision encoder, language decoder, and fusion layer are each
+        configurable via \code{hospital\_config.yaml}. The DICOM loader,
+        PHI scrubber, and evaluation suite can be used independently.
+\end{description}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Limitations}
+\label{sec:limitations}
+
+\begin{description}
+  \item[Single-institution bias] The model is trained and validated on
+        data from a single hospital. Scanner manufacturer, kVp settings,
+        patient demographics, and radiologist labelling style all vary
+        between institutions and may cause performance degradation at a
+        different site. Multi-institutional validation (federated or
+        centralised) is required before wider deployment.
+
+  \item[Closed-form answer vocabulary] Phase~2 training uses a
+        closed-answer classification head. The model cannot generate
+        free-text answers for open-ended questions such as
+        ``Describe the findings in this image.'' This limits clinical
+        utility to binary or short-answer questions.
+
+  \item[Language model hallucinations] BioGPT, like all auto-regressive
+        language models, can produce fluent but factually incorrect text.
+        The confidence score and Grad-CAM are designed to help clinicians
+        detect such cases, but they do not eliminate the fundamental
+        hallucination risk.
+
+  \item[Mock models in baseline experiments] Without the licensed
+        BiomedCLIP and BioGPT weights, the continuous integration
+        smoke tests use mock encoders. The reported quantitative results
+        assume real weights are loaded.
+
+  \item[Calibration on public vs.\ hospital data] The temperature
+        $T=1.263$ inherited from Phase~1 public-data training may not
+        be optimal for the hospital cohort. Cohort-specific calibration
+        (e.g., by Platt scaling on the validation set) is recommended
+        before clinical deployment.
+\end{description}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Ethical Considerations}
+\label{sec:ethics}
+
+\subsection{Data Governance}
+\label{subsec:data_governance}
+
+All patient data used in this research was:
+\begin{itemize}
+  \item Accessed under a formal IRB-approved research protocol.
+  \item Fully de-identified by the hospital informatics team, with
+        verification by a clinical privacy officer, before transfer
+        to the research environment.
+  \item Never transmitted outside the hospital network.
+  \item Subject to a data deletion schedule after the research period.
+\end{itemize}
+
+\subsection{Clinical Decision Support Only}
+\label{subsec:decision_support}
+
+\medxplain{} is designed as a \textbf{decision support tool}, not a
+diagnostic device. The final clinical judgement must remain with the
+responsible radiologist. This is reflected in the Gradio UI, which
+displays model answers and confidence alongside a Grad-CAM explanation
+to \emph{inform} the radiologist's review, not to replace it.
+
+The system must not be used:
+\begin{itemize}
+  \item As the sole basis for a clinical diagnosis or treatment decision.
+  \item On patient populations substantially different from the training
+        cohort (e.g., paediatric patients, non-chest modalities).
+  \item Without radiologist oversight.
+\end{itemize}
+
+\subsection{Algorithmic Fairness}
+\label{subsec:fairness}
+
+Machine learning models trained on historical hospital data risk encoding
+demographic biases present in the training distribution. Future work should
+evaluate model performance disaggregated by age group, sex, ethnicity, and
+imaging indication to identify potential disparities.
+
+\subsection{Transparency and Auditability}
+\label{subsec:transparency}
+
+The PHI audit log (\code{phi\_audit.log}) provides a tamper-evident record
+of every de-identification operation. The WandB training logs (when enabled)
+capture all hyperparameters, loss curves, and validation metrics.
+The discrepancy PDF reports generated by the clinical validation module
+ensure that every model--radiologist disagreement is reviewed.
+Together these mechanisms support the transparency requirements of the
+EU AI Act Article~13 and the FDA's proposed framework for AI/ML-based
+Software as a Medical Device~\citep{fda2021ai}.

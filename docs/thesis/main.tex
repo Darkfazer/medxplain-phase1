@@ -1,0 +1,261 @@
+%% ============================================================
+%%  MedXplain – Master Thesis
+%%  Explainable Medical Visual Question Answering
+%%  Hospital-Ready Infrastructure
+%% ============================================================
+\documentclass[12pt, a4paper, twoside]{report}
+
+%% ── Encoding & fonts ──────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+%% ── Page geometry ─────────────────────────────────────────
+\usepackage[top=2.5cm, bottom=2.5cm, left=3cm, right=2.5cm,
+            headheight=15pt]{geometry}
+
+%% ── Maths ─────────────────────────────────────────────────
+\usepackage{amsmath, amssymb, bm}
+
+%% ── Graphics ──────────────────────────────────────────────
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, fit}
+
+%% ── Tables ────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{longtable}
+
+%% ── Code listings ─────────────────────────────────────────
+\usepackage{listings}
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codegreen}{RGB}{0,128,0}
+\definecolor{codepurple}{RGB}{128,0,128}
+\definecolor{codeblue}{RGB}{0,0,200}
+\lstset{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  captionpos=b,
+  commentstyle=\color{codegreen},
+  keywordstyle=\color{codeblue}\bfseries,
+  stringstyle=\color{codepurple},
+  numberstyle=\tiny\color{gray},
+  numbers=left,
+  frame=single,
+  rulecolor=\color{gray!40},
+  tabsize=4,
+  showstringspaces=false,
+  language=Python
+}
+
+%% ── Hyperlinks ─────────────────────────────────────────────
+\usepackage[colorlinks=true,
+            linkcolor=blue!60!black,
+            citecolor=green!50!black,
+            urlcolor=blue!70!black]{hyperref}
+\usepackage{url}
+
+%% ── Headers / footers ─────────────────────────────────────
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE,RO]{\thepage}
+\fancyhead[LO]{\nouppercase{\rightmark}}
+\fancyhead[RE]{\nouppercase{\leftmark}}
+\renewcommand{\headrulewidth}{0.4pt}
+
+%% ── Captions ──────────────────────────────────────────────
+\usepackage[font=small, labelfont=bf]{caption}
+\usepackage{subcaption}
+
+%% ── Algorithms ────────────────────────────────────────────
+\usepackage[ruled, vlined, linesnumbered]{algorithm2e}
+
+%% ── Bibliography ──────────────────────────────────────────
+\usepackage[numbers, sort&compress]{natbib}
+\bibliographystyle{plainnat}
+
+%% ── Miscellaneous ─────────────────────────────────────────
+\usepackage{enumitem}
+\usepackage{pifont}   % \ding symbols
+\usepackage{mdframed}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins, breakable}
+\usepackage{setspace}
+\onehalfspacing
+
+%% ── Coloured boxes ────────────────────────────────────────
+\newtcolorbox{infobox}[1][]{
+  colback=blue!5, colframe=blue!50!black,
+  title=#1, fonttitle=\bfseries, breakable}
+\newtcolorbox{warningbox}[1][]{
+  colback=orange!10, colframe=orange!70!black,
+  title=#1, fonttitle=\bfseries, breakable}
+
+%% ── Custom commands ───────────────────────────────────────
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+\newcommand{\medxplain}{\textsc{MedXplain}}
+\newcommand{\dicom}{\textsc{DICOM}}
+\newcommand{\phi}{\textsc{PHI}}
+
+%% ── Metadata ──────────────────────────────────────────────
+\title{%
+  \Huge\bfseries\medxplain \\[0.5em]
+  \LARGE Explainable Medical Visual Question Answering\\[0.3em]
+  \large A Hospital-Ready, Privacy-Compliant Framework\\[1.5em]
+  \includegraphics[width=3cm]{figures/placeholder_logo.pdf}
+}
+\author{
+  \textbf{[Author Name]}\\[0.3em]
+  \small Supervised by: [Supervisor Name]\\
+  \small [University / Department]\\[0.5em]
+  \small \href{https://github.com/Darkfazer/medxplain-phase1}{github.com/Darkfazer/medxplain-phase1}
+}
+\date{[City], \today}
+
+%% ===========================================================
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+%% ── Abstract ──────────────────────────────────────────────
+\begin{abstract}
+\noindent
+Medical imaging volumes are growing faster than expert radiologist capacity,
+and existing artificial-intelligence tools rarely account for the stringent
+privacy, interpretability, and workflow requirements of real hospital
+environments. This thesis presents \medxplain, an end-to-end
+\emph{Medical Visual Question Answering} (VQA) framework designed for
+direct hospital deployment under HIPAA and GDPR constraints.
+
+The system ingests raw \dicom{} studies from hospital PACS systems,
+performs deterministic pseudonymisation of Protected Health Information
+(\textsc{PHI}), and converts pixel data into normalised tensors compatible
+with modern vision encoders. A pluggable two-encoder architecture pairs a
+BiomedCLIP vision backbone with a BioGPT language decoder, fused via a
+trainable cross-attention module. Training proceeds in two phases: Phase~1
+aligns image and text embedding spaces using NT-Xent contrastive loss
+(frozen backbones), while Phase~2 fine-tunes the full model for VQA using
+Low-Rank Adaptation (LoRA, rank~=~8) to minimise GPU memory requirements.
+
+Every model prediction is accompanied by a Grad-CAM heatmap overlay
+surfaced to the clinician in a Gradio web application that never transmits
+data outside the hospital network. A clinical validation module computes
+Cohen's Kappa agreement against radiologist ground-truth and generates
+PHI-free discrepancy PDF reports for expert review. An enhanced evaluation
+suite reports BERTScore~F1 and per-pathology Clinical~F1 alongside
+standard exact-match accuracy and BLEU-4, targeting the benchmarks set in
+the project Cahier des Charges ($>$65\%, $>$0.25, $>$0.75, $>$0.60
+respectively).
+
+Experimental results are presented on a de-identified chest radiograph
+cohort, and ablation studies quantify the benefit of the two-phase
+training strategy and LoRA rank selection. All code is open-source,
+offline-capable, and fully documented.
+
+\bigskip
+\noindent
+\textbf{Keywords:} Medical VQA, DICOM, HIPAA, BiomedCLIP, BioGPT, LoRA,
+Grad-CAM, Explainable AI, Radiology, Deep Learning.
+\end{abstract}
+
+\clearpage
+
+%% ── Declarations ──────────────────────────────────────────
+\chapter*{Declaration}
+\addcontentsline{toc}{chapter}{Declaration}
+I hereby declare that this thesis is my own original work and has not been
+submitted for any other degree. All sources of information used have been
+duly acknowledged. Data used in this work was accessed under an
+IRB-approved protocol and is fully de-identified in accordance with HIPAA
+Safe Harbour requirements and the DICOM Confidentiality Profile (PS~3.15
+Annex~E).
+
+\vspace{2cm}
+\noindent
+\rule{6cm}{0.4pt}\hfill \rule{4cm}{0.4pt}\\
+Signature \hfill Date
+
+\clearpage
+
+%% ── Acknowledgements ──────────────────────────────────────
+\chapter*{Acknowledgements}
+\addcontentsline{toc}{chapter}{Acknowledgements}
+The author wishes to thank the hospital informatics team for facilitating
+secure data access, the supervising radiologists for ground-truth
+annotations, and the open-source community behind PyTorch, Hugging Face
+Transformers, pydicom, and Gradio.
+
+\clearpage
+
+%% ── Table of contents ─────────────────────────────────────
+\tableofcontents
+\listoffigures
+\listoftables
+
+\clearpage
+
+%% ── Acronyms ──────────────────────────────────────────────
+\chapter*{List of Abbreviations}
+\addcontentsline{toc}{chapter}{List of Abbreviations}
+\begin{tabular}{@{}ll}
+  \toprule
+  \textbf{Acronym} & \textbf{Definition} \\
+  \midrule
+  AI   & Artificial Intelligence \\
+  AMP  & Automatic Mixed Precision \\
+  AUC  & Area Under the ROC Curve \\
+  BLEU & Bilingual Evaluation Understudy \\
+  CLIP & Contrastive Language-Image Pretraining \\
+  CNN  & Convolutional Neural Network \\
+  CT   & Computed Tomography \\
+  CXR  & Chest X-Ray \\
+  DICOM& Digital Imaging and Communications in Medicine \\
+  DX   & Digital Radiography \\
+  GDPR & General Data Protection Regulation \\
+  GPU  & Graphics Processing Unit \\
+  Grad-CAM & Gradient-weighted Class Activation Map \\
+  HIPAA& Health Insurance Portability and Accountability Act \\
+  ICD  & Implantable Cardioverter Defibrillator \\
+  IRB  & Institutional Review Board \\
+  LoRA & Low-Rank Adaptation \\
+  LLM  & Large Language Model \\
+  MR   & Magnetic Resonance \\
+  MRN  & Medical Record Number \\
+  NER  & Named Entity Recognition \\
+  NLP  & Natural Language Processing \\
+  NTXent & Normalised Temperature-scaled Cross Entropy \\
+  PACS & Picture Archiving and Communication System \\
+  PHI  & Protected Health Information \\
+  QA   & Question Answering \\
+  UID  & Unique Identifier \\
+  ViT  & Vision Transformer \\
+  VQA  & Visual Question Answering \\
+  \bottomrule
+\end{tabular}
+
+\clearpage
+
+%% ── Chapters ──────────────────────────────────────────────
+\include{chapters/ch1_introduction}
+\include{chapters/ch2_literature}
+\include{chapters/ch3_methodology}
+\include{chapters/ch4_results}
+\include{chapters/ch5_discussion}
+\include{chapters/ch6_conclusion}
+
+%% ── Bibliography ──────────────────────────────────────────
+\bibliography{references}
+
+%% ── Appendices ────────────────────────────────────────────
+\appendix
+\include{chapters/appendix}
+
+\end{document}

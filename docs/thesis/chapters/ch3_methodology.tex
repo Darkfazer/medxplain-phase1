@@ -1,0 +1,473 @@
+%% ============================================================
+%%  Chapter 3 – Methodology
+%% ============================================================
+\chapter{Methodology}
+\label{ch:method}
+
+\begin{infobox}[Chapter Overview]
+This chapter describes the complete \medxplain{} system: the hospital-grade
+data infrastructure (DICOM ingestion, PHI scrubbing, report parsing), the
+vision-language model architecture, the two-phase training protocol, and the
+explainability and clinical validation pipelines.
+\end{infobox}
+
+%% ─────────────────────────────────────────────────────────────
+\section{System Overview}
+\label{sec:system_overview}
+
+Figure~\ref{fig:pipeline} illustrates the end-to-end \medxplain{} pipeline.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=8mm and 14mm,
+  box/.style={rectangle, rounded corners=3pt, draw=blue!60!black,
+              fill=blue!8, minimum width=32mm, minimum height=9mm,
+              font=\small, text centered},
+  redbox/.style={box, draw=red!60!black, fill=red!8},
+  greenbox/.style={box, draw=green!50!black, fill=green!6},
+  arr/.style={-Stealth, thick, blue!60!black},
+]
+
+%% Row 1 – Data layer
+\node[box]  (dicom)   {DICOM\\Files (PACS)};
+\node[box, right=of dicom]   (loader)  {DICOM\\Loader};
+\node[redbox, right=of loader]  (phi)  {PHI\\Scrubber};
+\node[greenbox, right=of phi]   (tensor) {Tensor\\Converter};
+
+%% Row 2 – Model layer
+\node[box, below=18mm of loader]  (visenc) {BiomedCLIP\\Vision Encoder};
+\node[box, right=15mm of visenc]  (fusion) {Cross-Attention\\Fusion};
+\node[box, right=15mm of fusion]  (lmdec)  {BioGPT\\+ LoRA};
+
+%% Row 3 – Output layer
+\node[greenbox, below=15mm of fusion] (answer)  {Answer +\\Confidence};
+\node[redbox,   right=12mm of answer] (gradcam) {Grad-CAM\\Heatmap};
+\node[box, left=12mm of answer]       (report)  {Report Parser\\(Optional)};
+
+%% Row 4 – UI
+\node[box, below=15mm of answer, xshift=15mm]   (ui) {Gradio Clinical\\Interface};
+
+%% Arrows – data layer
+\draw[arr] (dicom)  -- (loader);
+\draw[arr] (loader) -- (phi);
+\draw[arr] (phi)    -- (tensor);
+\draw[arr] (tensor) -- ++(0,-10mm) -| (visenc);
+
+%% Arrows – model layer
+\draw[arr] (visenc) -- (fusion);
+\draw[arr] (fusion) -- (lmdec);
+\draw[arr] (fusion) -- (answer);
+\draw[arr] (lmdec)  |- (answer);
+
+%% Arrows – output layer
+\draw[arr] (answer)  -- (gradcam);
+\draw[arr] (answer)  -- (report);
+\draw[arr] (answer)  -- (ui);
+\draw[arr] (gradcam) |- (ui);
+
+\end{tikzpicture}
+\caption{End-to-end \medxplain{} pipeline. Blue boxes: computation modules;
+         red: privacy/explainability; green: data/output.}
+\label{fig:pipeline}
+\end{figure}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Hospital-Grade Data Infrastructure}
+\label{sec:data_infra}
+
+\subsection{DICOM Ingestion Pipeline}
+\label{sec:dicom}
+
+Hospital imaging data is stored in the Digital Imaging and Communications
+in Medicine (\dicom) format, a complex binary standard that encodes pixel
+data alongside hundreds of metadata attributes (tags) in a structured
+dataset~\citep{dicom2023}.
+
+The \code{DICOMLoader} class (Listing~\ref{lst:dicom}) wraps the
+\code{pydicom} library to:
+\begin{enumerate}
+  \item Recursively discover all \code{.dcm} files in a study directory.
+  \item Validate each file against the known transfer syntax whitelist
+        (Implicit/Explicit VR, JPEG, JPEG-LS, JPEG~2000 via \code{pylibjpeg}).
+  \item Extract safe metadata tags (modality, window centre/width, pixel
+        spacing) into the \code{DICOMStudy} dataclass.
+  \item Normalise pixel arrays to float32 $\in [0,1]$ via VOI LUT windowing
+        (Equation~\ref{eq:window}).
+  \item Pseudonymise PatientID and StudyInstanceUID using SHA-256
+        (Equation~\ref{eq:pseudo}).
+\end{enumerate}
+
+\paragraph{Pixel normalisation.}
+The windowing function maps raw Hounsfield units (CT) or grey values
+(radiography) to the display range specified by the DICOM
+\texttt{WindowCenter} ($C$) and \texttt{WindowWidth} ($W$) tags:
+\begin{equation}
+  p_{\mathrm{norm}} = \mathrm{clip}\!\left(
+    \frac{p - \left(C - W/2\right)}{W},\ 0,\ 1
+  \right)
+  \label{eq:window}
+\end{equation}
+When windowing tags are absent, min-max normalisation is applied as a
+fallback.
+
+\paragraph{Deterministic pseudonymisation.}
+Each identifying value $v$ (PatientID, StudyInstanceUID) is replaced by a
+truncated SHA-256 digest of the concatenated application salt and value:
+\begin{equation}
+  \mathrm{pseudo}(v) = \mathrm{SHA\text{-}256}(\texttt{salt} \| v)[:32]
+  \label{eq:pseudo}
+\end{equation}
+The salt is injected at runtime via the
+\code{MEDXPLAIN\_PSEUDO\_SALT} environment variable, ensuring the mapping
+is irreversible without the key while preserving longitudinal linkage across
+studies from the same patient.
+
+\begin{lstlisting}[caption={Using the DICOM loader.},
+                   label={lst:dicom}]
+from data_ingestion.dicom_pipeline import DICOMLoader
+
+loader = DICOMLoader(target_size=(224, 224))
+study  = loader.load_study("/hospital/pacs/study_001/")
+
+# study.patient_id  ->  "a4f3c2..."  (SHA-256 pseudonym)
+# study.modality    ->  "CT"
+# study.images[0].shape  ->  torch.Size([1, 224, 224])
+\end{lstlisting}
+
+\paragraph{Multi-frame support.}
+Single-frame modalities (CR, DX) are returned as tensors of shape
+$(1, H, W)$; multi-frame CT/MR volumes are returned as $(N, 1, H, W)$
+where $N$ is the slice count.
+
+\subsection{PHI Scrubbing}
+\label{sec:phi}
+
+The \code{phi\_scrubber} module provides a one-call API:
+\begin{lstlisting}[caption={PHI scrubbing API.}, label={lst:phi}]
+from data_ingestion.phi_scrubber import scrub_dicom_study
+clean = scrub_dicom_study(raw_study, keep_longitudinal_link=True)
+\end{lstlisting}
+
+Internally it performs three passes:
+
+\begin{enumerate}
+  \item \textbf{DICOM tag scrub.} All 35+ tags in
+        \code{DICOM\_CONFIDENTIALITY\_KEYWORDS} (PatientName, DOB,
+        InstitutionName, \dots) are deleted from a deep copy of the dataset.
+        Tags in \code{UID\_KEYWORDS\_TO\_PSEUDONYMISE} are replaced with
+        deterministic \code{2.25.<hash>} UIDs.
+        Tags not in \code{SAFE\_DICOM\_KEYWORDS} are deleted by default.
+
+  \item \textbf{Report text scrub.}
+        A battery of compiled regular expressions redacts:
+        MRNs (\code{MRN\textbackslash :\textbackslash s*\textbackslash d\{4,12\}}),
+        phone numbers, dates (multiple formats), email addresses, and
+        physician name signatures (``Reported by Dr.~X'').
+        Optionally, a spaCy \textsc{NER} model (\code{en\_core\_web\_sm} or
+        \code{en\_core\_sci\_lg}) provides additional PERSON entity
+        redaction.
+
+  \item \textbf{Audit record.}
+        A single JSON line is appended to
+        \code{./logs/phi\_audit.log} containing: ISO-8601 timestamps,
+        SHA-256 hash of the source file paths (never the content), frame
+        count, and a boolean flag indicating whether NER was used.
+        This provides a tamper-evident compliance record without logging PHI.
+\end{enumerate}
+
+\subsection{Radiology Report Parser}
+\label{sec:report_parser}
+
+Radiology reports follow a semi-structured free-text format with named
+sections (Clinical History, Findings, Impression). The
+\code{ReportParser} class extracts these sections using line-by-line header
+matching and then applies the 14-entry \textbf{pathology catalogue}
+(Table~\ref{tab:pathology}) to the combined Findings + Impression text.
+
+\begin{table}[htbp]
+\centering
+\caption{Pathology catalogue used by \code{ReportParser}.}
+\label{tab:pathology}
+\begin{tabular}{@{}llp{6cm}@{}}
+\toprule
+\textbf{Key} & \textbf{Display Name} & \textbf{Detection Patterns} \\
+\midrule
+\code{pneumothorax}      & Pneumothorax          & pneumothorax, ptx \\
+\code{pleural\_effusion} & Pleural Effusion       & pleural effusion, hydrothorax \\
+\code{pneumonia}         & Pneumonia              & pneumonia, pneumonitis, consolidation \\
+\code{atelectasis}       & Atelectasis            & atelectasis, collapse \\
+\code{cardiomegaly}      & Cardiomegaly           & cardiomegaly, cardiac enlargement \\
+\code{pulmonary\_edema}  & Pulmonary Oedema       & pulmonary oedema, vascular congestion \\
+\code{nodule}            & Pulmonary Nodule       & nodule, rounded opacity \\
+\code{fracture}          & Fracture               & fracture, cortical disruption \\
+\code{pneumoperitoneum}  & Pneumoperitoneum       & pneumoperitoneum, free air \\
+\code{pleural\_thickening}& Pleural Thickening    & pleural thickening \\
+\code{pleural\_mass}     & Pleural Mass           & pleural mass, pleural lesion \\
+\code{hilar\_enlargement}& Hilar Enlargement      & hilar enlargement \\
+\code{interstitial}      & Interstitial Pattern   & interstitial markings, reticular \\
+\code{aortic\_widening}  & Aortic Widening        & aortic widening, aortic aneurysm \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For each finding, negation heuristics check the eight words preceding the
+detected keyword for terms such as \emph{no}, \emph{without},
+\emph{absence of}, or \emph{ruled out}. Laterality (left/right/bilateral)
+and severity (mild/moderate/severe) qualifiers are extracted from a 60-word
+window surrounding each match.
+
+%% ─────────────────────────────────────────────────────────────
+\section{Model Architecture}
+\label{sec:architecture}
+
+Figure~\ref{fig:arch} details the three-component architecture.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=6mm and 18mm,
+  block/.style={rectangle, rounded corners=4pt, draw=blue!60!black,
+               fill=blue!7, minimum width=36mm, minimum height=14mm,
+               text centered, font=\small},
+  lora/.style={block, draw=orange!70, fill=orange!8},
+  arr/.style={-Stealth, thick},
+  label/.style={font=\tiny, text=gray},
+]
+
+\node[block] (img) {Input Image\\$224 \times 224$};
+\node[block, right=22mm of img] (vit)
+      {BiomedCLIP\\ViT-B/16\\{\tiny $\sim$86M params}};
+\node[block, right=22mm of vit] (xattn)
+      {Cross-Attention\\Fusion\\{\tiny $\sim$9M params, trainable}};
+\node[lora,  right=22mm of xattn] (biogpt)
+      {BioGPT\\+ LoRA (r=8)\\{\tiny $\sim$2M trainable}};
+\node[block, below=14mm of xattn] (head)
+      {Answer Head\\$\mathbf{W} \in \mathbb{R}^{768 \times |\mathcal{V}|}$};
+\node[block, left=18mm of head] (question) {Question\\Tokens};
+
+\draw[arr, blue!60] (img)      -- (vit);
+\draw[arr, blue!60] (vit)      -- node[above, label]{visual tokens} (xattn);
+\draw[arr, blue!60] (question) -- (xattn);
+\draw[arr, blue!60] (xattn)   -- (biogpt);
+\draw[arr, blue!60] (biogpt)  -| (head);
+\draw[arr, green!50!black] (head) -- ++(0,-12mm)
+  node[below, font=\small]{Answer logits};
+
+%% Freeze / unfreeze annotations
+\node[label, above=1mm of vit] {Phase 1: frozen\\Phase 2: last 2 blocks};
+\node[label, above=1mm of biogpt] {Phase 1: frozen\\Phase 2: LoRA unfrozen};
+\end{tikzpicture}
+\caption{\medxplain{} model architecture. Orange = LoRA-adapted layers.
+         Arrows show data flow. Freeze/unfreeze status is shown per training phase.}
+\label{fig:arch}
+\end{figure}
+
+\paragraph{Vision encoder.}
+BiomedCLIP~\citep{zhang2023biomedclip} encodes input images of size
+$224 \times 224$ into a sequence of patch tokens using its ViT-B/16
+backbone. The \texttt{[CLS]} token and patch tokens are passed to the
+fusion layer as visual tokens $\mathbf{V} \in \mathbb{R}^{N_v \times D}$
+($N_v = 197$, $D = 768$).
+
+\paragraph{Cross-attention fusion.}
+The fusion module implements standard multi-head attention where text
+features act as queries and visual features as keys and values:
+\begin{equation}
+  \mathrm{Fusion}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) =
+  \mathrm{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{D}}\right)
+  \mathbf{V}
+  \label{eq:crossattn}
+\end{equation}
+with 8~heads and $D=768$. Implemented in
+\code{medical\_vqa\_infrastructure/models/fusion.py}.
+
+\paragraph{Language decoder.}
+BioGPT processes the fused representation conditioned on the question
+tokens. LoRA adapters (Equation~\ref{eq:lora}) are injected into the
+query and value projections of every attention layer.
+
+\paragraph{Answer head.}
+A linear projection maps the pooled fused feature vector to a
+classification over the closed answer vocabulary
+$\mathcal{V}$ (e.g., \{Yes, No\}).
+
+%% ─────────────────────────────────────────────────────────────
+\section{Two-Phase Training}
+\label{sec:training}
+
+Training is implemented in
+\code{training/train\_vqa\_two\_phase.py} and is launched as:
+\begin{lstlisting}[language=bash, caption={Launching two-phase training.},
+                   label={lst:train}]
+python training/train_vqa_two_phase.py \
+    --config config/hospital_config.yaml \
+    --phase1_epochs 10 --phase2_epochs 20 \
+    --batch_size 8 --amp
+\end{lstlisting}
+
+\subsection{Phase 1: Vision-Language Alignment}
+\label{subsec:phase1}
+
+\paragraph{Objective.}
+Learn a shared embedding space such that images and their corresponding
+clinical questions are proximate.
+
+\paragraph{Trainable parameters.}
+The vision encoder and language decoder are \emph{frozen}. Only the
+cross-attention fusion layer and two linear projection heads
+($\mathbf{W}_{\mathrm{img}}, \mathbf{W}_{\mathrm{txt}} \in
+\mathbb{R}^{D \times D}$) receive gradient updates.
+
+\paragraph{Loss function.}
+The NT-Xent (InfoNCE) contrastive loss (Equation~\ref{eq:ntxent}) is applied
+symmetrically over the batch:
+\begin{equation}
+  \mathcal{L}_1 = \frac{1}{2}\bigl(
+    \mathcal{L}_{\mathrm{i2t}} + \mathcal{L}_{\mathrm{t2i}}
+  \bigr)
+  \label{eq:phase1_loss}
+\end{equation}
+with temperature $\tau = 0.07$.
+
+\paragraph{Optimiser.}
+AdamW~\citep{loshchilov2019adamw} with learning rate $\eta_1 = 10^{-4}$
+and weight decay $10^{-4}$, combined with cosine annealing over 10 epochs.
+
+\paragraph{Checkpoint.}
+\code{checkpoints/phase1\_alignment.pt}
+
+\subsection{Phase 2: VQA Fine-tuning}
+\label{subsec:phase2}
+
+\paragraph{Objective.}
+Answer closed-form clinical questions accurately.
+
+\paragraph{Initialisation.}
+Phase~1 checkpoint is loaded. The entire model is frozen, then:
+\begin{itemize}
+  \item The last 2 transformer blocks of the vision encoder are unfrozen.
+  \item LoRA adapters (rank~$r=8$, $\alpha=16$) are injected into the
+        \texttt{query} and \texttt{value} projections of BioGPT.
+  \item The cross-attention fusion and answer head are unfrozen.
+\end{itemize}
+
+This strategy protects the low-level visual representations learned during
+Phase~1 while allowing the model to specialise the higher-level features
+for the VQA task.
+
+\paragraph{Loss function.}
+Standard cross-entropy over the answer vocabulary $\mathcal{V}$:
+\begin{equation}
+  \mathcal{L}_2 = -\sum_{c \in \mathcal{V}} y_c \log \hat{p}_c
+  \label{eq:ce}
+\end{equation}
+
+\paragraph{Optimiser.}
+AdamW with $\eta_2 = 5 \times 10^{-5}$, gradient clipping
+$\|\nabla\|_2 \leq 1.0$, cosine annealing over 20 epochs.
+
+\paragraph{Regularisation.}
+Automatic Mixed Precision (AMP, \code{torch.cuda.amp}) halves GPU memory
+consumption. Gradient checkpointing is optionally enabled for
+memory-constrained hardware.
+
+\paragraph{Checkpoint.}
+\code{checkpoints/phase2\_vqa\_finetuned.pt}
+
+\subsection{Training Infrastructure}
+\label{subsec:train_infra}
+
+\begin{itemize}
+  \item \textbf{WandB logging}: Loss curves, learning rates, and validation
+        accuracy are logged every step. Graceful fallback to stdout if WandB
+        is unavailable.
+  \item \textbf{Validation}: Every 50 gradient steps, the model is evaluated
+        on the held-out validation set. Sample predictions are logged for
+        qualitative monitoring.
+  \item \textbf{Windows compatibility}: \code{num\_workers=0} (main-process
+        DataLoader) avoids the multiprocessing \texttt{fork} issue on Windows.
+\end{itemize}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Explainability Integration}
+\label{sec:explainability}
+
+\subsection{Grad-CAM Computation}
+\label{subsec:gradcam_impl}
+
+For the VQA setting, the answer class $c$ corresponds to the argmax of the
+answer head logits. Grad-CAM is computed with respect to the feature maps
+of the \emph{last} attention block of the BiomedCLIP ViT, following
+the formulation in Equations~\ref{eq:alpha}--\ref{eq:gradcam}.
+
+The resulting heatmap is:
+\begin{enumerate}
+  \item Resized to the input resolution ($224 \times 224$) using bilinear
+        interpolation.
+  \item Converted to a jet colourmap ($\in [0,1]$).
+  \item Alpha-blended with the original image at $\alpha = 0.5$.
+\end{enumerate}
+Implementation: \code{explainability/grad\_cam.py} (via
+\code{pytorch\_grad\_cam}).
+
+\subsection{Additional Attribution Methods}
+\label{subsec:xai_additional}
+
+\begin{itemize}
+  \item \textbf{Integrated Gradients}~(\code{explainability/integrated\_gradients.py}):
+        Provides axiomatic attribution with completeness guarantee.
+        Used for academic analysis of model behaviour.
+  \item \textbf{Counterfactual Explanations}~(\code{explainability/counterfactual.py}):
+        Identifies the minimal pixel-space perturbation that flips the
+        predicted answer. Intended for offline discrepancy case analysis.
+\end{itemize}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Clinical User Interface}
+\label{sec:ui}
+
+The \code{vqa\_app\_deliverable/app\_gradio.py} application implements
+the Cahier des Charges UI specification using Gradio Blocks:
+
+\begin{itemize}
+  \item \textbf{Privacy banner}: A persistent markdown block at the top of
+        every tab reads: ``\texttt{LOCAL PROCESSING ONLY -- No data leaves
+        this machine}''.
+  \item \textbf{DICOM upload}: \code{gr.File(file\_types=[".dcm",".png",".jpg"])}
+        accepts DICOM and standard raster formats. On upload, the file is
+        decoded by \code{DICOMLoader} and converted to a PIL image for display.
+  \item \textbf{Two-panel output}: The VQA answer and confidence score are
+        shown on the left; the Grad-CAM heatmap is rendered on the right
+        at the same resolution as the uploaded image.
+  \item \textbf{DICOM metadata panel}: A \code{gr.Accordion} containing a
+        \code{gr.JSON} widget displays the pseudonymised study metadata.
+  \item \textbf{Clinical tabs}: Report-Aware, Context-Aware, Longitudinal
+        View, Differential Diagnosis, and One-Click Report tabs are
+        accessible alongside the primary VQA tab.
+\end{itemize}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Clinical Validation}
+\label{sec:clin_val_method}
+
+The \code{evaluation/clinical\_validation.py} module implements
+radiologist-comparison validation:
+
+\begin{enumerate}
+  \item Load a CSV of ground-truth annotations
+        (\texttt{image\_id}, \texttt{question}, \texttt{radiologist\_answer}).
+  \item For each row, run model inference and compare to the radiologist label.
+  \item Compute Cohen's Kappa $\kappa$ and exact-match accuracy.
+  \item For every discrepancy, generate a PHI-free PDF report containing
+        the source image, question, model answer and confidence,
+        radiologist answer, and Grad-CAM overlay.
+\end{enumerate}
+
+Cohen's Kappa is defined as:
+\begin{equation}
+  \kappa = \frac{p_o - p_e}{1 - p_e}
+  \label{eq:kappa}
+\end{equation}
+where $p_o$ is the observed agreement and $p_e$ is the expected agreement
+under independence.

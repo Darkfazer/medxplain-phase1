@@ -1,0 +1,173 @@
+%% ============================================================
+%%  Chapter 1 – Introduction
+%% ============================================================
+\chapter{Introduction}
+\label{ch:intro}
+
+\begin{infobox}[Chapter Overview]
+This chapter motivates the need for explainable, privacy-compliant Medical
+Visual Question Answering (VQA), states the research questions addressed by
+\medxplain, and summarises the core contributions of this thesis.
+\end{infobox}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Background and Motivation}
+\label{sec:motivation}
+
+Medical imaging occupies a central role in modern clinical decision-making.
+Chest radiography alone accounts for more than 2 billion examinations
+worldwide each year~\citep{who2020xray}, with demand accelerating as
+populations age and portable imaging technology proliferates. Yet the supply
+of trained radiologists grows far more slowly. Studies consistently report
+that radiologist workload has doubled over the past decade, contributing to
+fatigue, longer reporting times, and measurably higher diagnostic error
+rates~\citep{reiner2012radiology}.
+
+Artificial intelligence offers a compelling complement to human expertise.
+Deep learning models have achieved radiologist-level performance on isolated
+classification tasks such as detecting pneumonia~\citep{rajpurkar2017chexnet}
+or screening for diabetic retinopathy~\citep{gulshan2016retina}. However,
+two fundamental gaps prevent these systems from entering routine clinical use:
+
+\begin{enumerate}[label=\arabic*.]
+  \item \textbf{Lack of explainability.} Clinicians and regulators require
+        insight into \emph{why} a model reaches its conclusion.
+        The European Union's AI Act (Article~13) and the US FDA's action plan
+        for AI/ML-based Software as a Medical Device both mandate transparency
+        as a prerequisite for high-risk AI deployment~\citep{euaiact,fda2021ai}.
+  \item \textbf{Incompatibility with hospital data infrastructure.}
+        Hospital imaging data is stored in the \dicom{} format, legally
+        protected under HIPAA~\citep{hipaa} and GDPR~\citep{gdpr}, and must
+        never leave the institution's network. Existing research systems are
+        trained on curated public datasets and offer no pathway for ingesting
+        private, PHI-bearing DICOM files.
+\end{enumerate}
+
+\medxplain{} addresses both gaps simultaneously by combining a principled
+privacy-engineering layer with integrated explainability and a clinical-grade
+user interface.
+
+%% ─────────────────────────────────────────────────────────────
+\section{Problem Statement}
+\label{sec:problem}
+
+We articulate the core research problem as follows:
+
+\begin{warningbox}[Research Problem]
+Given a medical image $\mathbf{x} \in \mathbb{R}^{H \times W \times C}$
+sourced from a hospital PACS system and a natural-language clinical
+question $q$, produce: (i)~an accurate answer $a$; (ii)~a spatial
+explanation $\mathbf{E} \in \mathbb{R}^{H \times W}$ highlighting the image
+regions that justify $a$; (iii)~a confidence score $\hat{c} \in [0,1]$;
+all while guaranteeing that no Protected Health Information is retained in
+any intermediate or final artefact.
+\end{warningbox}
+
+This formulation extends the classic VQA setting~\citep{antol2015vqa} with
+two hard constraints: \textbf{privacy} (HIPAA/GDPR compliance) and
+\textbf{explainability} (regulatory-grade visual attribution).
+
+%% ─────────────────────────────────────────────────────────────
+\section{Research Questions}
+\label{sec:rqs}
+
+This thesis investigates three research questions:
+
+\begin{description}
+  \item[\textbf{RQ1}] Can a multimodal VQA model trained on de-identified
+        hospital chest radiographs achieve accuracy exceeding 65\% on
+        closed-form clinical questions, as specified in the Cahier des
+        Charges?
+  \item[\textbf{RQ2}] How can PHI compliance (HIPAA/GDPR) and
+        explainability (Grad-CAM) be engineered as \emph{first-class
+        architectural concerns} rather than post-hoc additions?
+  \item[\textbf{RQ3}] Does a two-phase training strategy (vision-language
+        alignment followed by LoRA fine-tuning) outperform single-phase
+        end-to-end training under a limited hospital-GPU budget?
+\end{description}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Proposed Solution: \medxplain}
+\label{sec:solution}
+
+\medxplain{} is a modular, hospital-deployable Medical VQA framework with
+the following architectural pillars:
+
+\begin{itemize}
+  \item \textbf{Privacy-first data pipeline.} Raw DICOM studies are loaded,
+        stripped of all 18 HIPAA Safe Harbour identifiers, and converted to
+        normalised float32 tensors before any model ever sees the data
+        (\S\ref{sec:dicom}--\ref{sec:phi}).
+
+  \item \textbf{Pluggable vision-language architecture.} A BiomedCLIP
+        vision encoder~\citep{zhang2023biomedclip} is fused with a BioGPT
+        language decoder~\citep{luo2022biogpt} via a trainable
+        cross-attention module, all swappable via YAML configuration.
+
+  \item \textbf{Two-phase training.} Phase~1 aligns the visual and
+        textual embedding spaces with NT-Xent contrastive
+        loss~\citep{chen2020simclr} on frozen backbones. Phase~2
+        fine-tunes for closed-form VQA using LoRA adapters~\citep{hu2021lora}
+        (rank~=~8) on the language decoder, reducing trainable parameters
+        by ${\sim}99\%$.
+
+  \item \textbf{Integrated explainability.} Every prediction is accompanied
+        by a Grad-CAM~\citep{selvaraju2017gradcam} heatmap overlay rendered
+        in real-time within the Gradio web interface.
+
+  \item \textbf{Air-gapped deployment.} The system operates entirely
+        on-premises. \code{allow\_cloud\_upload: false} is enforced in the
+        hospital configuration, and all core functionality requires no
+        external network access.
+\end{itemize}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Contributions}
+\label{sec:contributions}
+
+The original contributions of this thesis are:
+
+\begin{enumerate}[label=\textbf{C\arabic*.}]
+  \item \textbf{Hospital-Ready Data Pipeline (Chapter~\ref{ch:method},
+        \S\ref{sec:data_infra}).}
+        A production-grade DICOM ingestion pipeline with HIPAA/GDPR-compliant
+        pseudonymisation, VOI-LUT pixel normalisation, and a tamper-evident
+        audit trail. Implemented in \code{data\_ingestion/dicom\_pipeline.py},
+        \code{phi\_scrubber.py}, and \code{report\_parser.py}.
+
+  \item \textbf{Two-Phase Training Protocol
+        (Chapter~\ref{ch:method}, \S\ref{sec:training}).}
+        NT-Xent contrastive pre-alignment followed by LoRA VQA fine-tuning
+        with automatic mixed precision and gradient checkpointing.
+        Implemented in \code{training/train\_vqa\_two\_phase.py}.
+
+  \item \textbf{Integrated Explainability
+        (Chapter~\ref{ch:method}, \S\ref{sec:explainability}).}
+        Grad-CAM explanations embedded in a privacy-safe clinical UI,
+        displayed side-by-side with model answers and confidence scores.
+
+  \item \textbf{Clinical Validation Framework
+        (Chapter~\ref{ch:results}, \S\ref{sec:clinical_val}).}
+        A radiologist-comparison module that computes Cohen's Kappa, flags
+        discrepancies, and generates PHI-free PDF reports for manual review.
+
+  \item \textbf{Extended Evaluation Suite
+        (Chapter~\ref{ch:results}, \S\ref{sec:quant}).}
+        BERTScore F1 and per-pathology Clinical F1 added alongside
+        standard BLEU-4 and exact-match accuracy.
+\end{enumerate}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Thesis Structure}
+\label{sec:structure}
+
+The remainder of this thesis is organised as follows.
+Chapter~\ref{ch:lit} reviews related work in medical VQA, vision-language
+models, parameter-efficient fine-tuning, and medical AI explainability.
+Chapter~\ref{ch:method} describes the complete \medxplain{} methodology,
+including the data infrastructure, model architecture, and training protocol.
+Chapter~\ref{ch:results} presents experimental results and ablation studies.
+Chapter~\ref{ch:discussion} discusses strengths, limitations, and ethical
+considerations. Chapter~\ref{ch:conclusion} concludes and outlines future
+directions. Appendices provide the repository map, configuration reference,
+and radiologist validation form.

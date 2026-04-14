@@ -1,0 +1,308 @@
+%% ============================================================
+%%  Chapter 2 – Literature Review
+%% ============================================================
+\chapter{Literature Review}
+\label{ch:lit}
+
+\begin{infobox}[Chapter Overview]
+This chapter surveys the state of the art in Medical VQA datasets,
+vision-language foundation models, parameter-efficient fine-tuning
+strategies, explainability methods, and privacy engineering in medical AI ---
+all of which inform the design decisions made in \medxplain.
+\end{infobox}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Medical Visual Question Answering}
+\label{sec:lit_vqa}
+
+Visual Question Answering (VQA) is the task of producing a natural-language
+answer $a$ given an image $\mathbf{x}$ and a question $q$~\citep{antol2015vqa}.
+The medical subdomain imposes unique challenges: answers are clinically
+consequential, question vocabulary is domain-specific, and the mapping from
+visual evidence to answer is rarely straightforward.
+
+\subsection{Benchmark Datasets}
+\label{subsec:datasets}
+
+Table~\ref{tab:datasets} summarises the principal publicly available
+Medical VQA datasets.
+
+\begin{table}[htbp]
+\centering
+\caption{Publicly available Medical VQA datasets.}
+\label{tab:datasets}
+\begin{tabular}{@{}lllr@{}}
+\toprule
+\textbf{Dataset} & \textbf{Domain} & \textbf{Task Type} & \textbf{QA Pairs} \\
+\midrule
+VQA-Med 2019~\citep{ben2019vqamed}   & Radiology (MedPix)      & Closed/Open & 15{,}292 \\
+VQA-Med 2021~\citep{did2021vqamed}   & Radiology               & Closed/Open & 5{,}500  \\
+VQA-RAD~\citep{lau2018vqarad}        & Radiology               & Closed/Open & 3{,}515  \\
+PathVQA~\citep{he2020pathvqa}        & Histopathology          & Yes/No + Open & 32{,}799 \\
+SLAKE~\citep{liu2021slake}           & Radiology (EN + ZH)     & Semantic+Visual & 14{,}028 \\
+\midrule
+Hospital Cohort (this work)          & Chest X-ray (private)   & Closed      & ---     \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+A common weakness of all public benchmarks is their origin in annotated
+teaching files rather than prospective clinical workflow. This thesis
+addresses this gap by working with real, de-identified hospital data.
+
+\subsection{Evaluation Metrics in Medical VQA}
+\label{subsec:metrics_lit}
+
+Standard VQA evaluation uses exact-match accuracy and BLEU~\citep{papineni2002bleu}
+scores. Recent work advocates for semantically richer metrics:
+
+\begin{itemize}
+  \item \textbf{BERTScore}~\citep{zhang2020bertscore}: Computes token-level
+        cosine similarity between candidate and reference using contextual
+        BERT embeddings. Better captures semantic equivalence than $n$-gram
+        overlap.
+  \item \textbf{Clinical Accuracy}: Domain-specific accuracy measuring
+        whether the correct clinical entity (finding, diagnosis) is
+        identified, independent of surface form.
+  \item \textbf{RadGrad Score}~\citep{abacha2019question}: Composite metric
+        combining BLEU with clinical relevance.
+\end{itemize}
+
+\medxplain{} implements exact-match accuracy, BLEU-4, BERTScore F1, and a
+novel Clinical F1 metric based on per-pathology presence detection
+(\S\ref{subsec:clinical_f1}).
+
+%% ─────────────────────────────────────────────────────────────
+\section{Vision-Language Foundation Models}
+\label{sec:lit_vlm}
+
+The field has been transformed by large-scale contrastive pre-training on
+paired image-text data, a paradigm pioneered by CLIP~\citep{radford2021clip}.
+
+\subsection{CLIP and Biomedical Variants}
+\label{subsec:clip}
+
+CLIP trains dual image and text encoders to maximise cosine similarity for
+matching pairs in a batch while minimising it for non-matching pairs,
+using the NT-Xent objective:
+\begin{equation}
+\mathcal{L}_{\mathrm{CLIP}} = -\frac{1}{N} \sum_{i=1}^{N}
+\log \frac{\exp(\bm{v}_i \cdot \bm{t}_i / \tau)}
+          {\sum_{j=1}^{N} \exp(\bm{v}_i \cdot \bm{t}_j / \tau)}
+\label{eq:ntxent}
+\end{equation}
+where $\bm{v}_i$ and $\bm{t}_i$ are $L_2$-normalised image and text
+embeddings for the $i$-th pair, and $\tau$ is a learnable temperature.
+
+\textbf{BiomedCLIP}~\citep{zhang2023biomedclip} extends CLIP by pretraining
+on 15 million biomedical image-text pairs harvested from PubMed Central
+open-access articles. The resulting Vision Transformer (ViT-B/16) backbone
+shows strong transfer to radiology, pathology, and ophthalmology tasks.
+\medxplain{} uses BiomedCLIP as its vision encoder.
+
+\subsection{Medical Language Decoders}
+\label{subsec:llm}
+
+\textbf{BioGPT}~\citep{luo2022biogpt} is a GPT-2~\citep{radford2019gpt2}
+variant pretrained on 15 million PubMed abstracts, achieving state-of-the-art
+performance on several biomedical NLP benchmarks including BioASQ and PubMedQA.
+
+More recent work applies instruction-tuned LLMs to radiology
+report generation~\citep{lee2023llava,li2023llavamedical}, but these
+require substantial compute and typically cannot run in air-gapped hospital
+environments. BioGPT balances domain specificity with manageable model size.
+
+\subsection{Multimodal Fusion Architectures}
+\label{subsec:fusion}
+
+After CLIP-style alignment, the dominant fusion strategies are:
+\begin{enumerate}
+  \item \textbf{Concatenation + MLP}: Simple but loses spatial structure.
+  \item \textbf{Cross-attention}~\citep{alayrac2022flamingo}: Text tokens
+        attend to visual tokens at each transformer layer, enabling rich
+        image-conditioned generation.
+  \item \textbf{Q-Former}~\citep{li2023blip2}: A lightweight bottleneck
+        transformer that extracts task-relevant visual features before
+        passing them to the frozen LLM.
+\end{enumerate}
+
+\medxplain{} adopts \textbf{cross-attention fusion}, implemented in
+\code{medical\_vqa\_infrastructure/models/fusion.py}, because it provides
+interpretable attention maps and fits naturally with the Grad-CAM
+explainability pipeline.
+
+%% ─────────────────────────────────────────────────────────────
+\section{Parameter-Efficient Fine-Tuning}
+\label{sec:lit_peft}
+
+Hospital GPU budgets rarely accommodate full fine-tuning of models with
+hundreds of millions of parameters. Parameter-Efficient Fine-Tuning (PEFT)
+methods update only a small subset of parameters while keeping the
+pre-trained backbone frozen.
+
+\subsection{Low-Rank Adaptation (LoRA)}
+\label{subsec:lora}
+
+LoRA~\citep{hu2021lora} decomposes the weight update $\Delta W$ of any
+linear layer as a product of two low-rank matrices:
+\begin{equation}
+  W' = W + \Delta W = W + \frac{\alpha}{r}\, B A
+  \label{eq:lora}
+\end{equation}
+where $W \in \mathbb{R}^{d \times k}$ is frozen, $A \in \mathbb{R}^{r \times k}$
+and $B \in \mathbb{R}^{d \times r}$ are the trainable adapters (rank $r \ll \min(d,k)$),
+and $\alpha$ is a scaling hyperparameter. LoRA initialises $A$ with Kaiming
+uniform and $B$ with zeros, so $\Delta W = 0$ at the start of training.
+
+With $r=8$ and applying LoRA to the query, key, and value projections of
+the BioGPT attention layers, the number of trainable parameters in the
+language decoder drops from ${\sim}347$M to ${\sim}2$M, a reduction of
+$99.4\%$.
+
+\subsection{Adapter Layers}
+\label{subsec:adapters}
+
+\cite{houlsby2019adapter} introduce learnable bottleneck modules inserted
+between sub-layers of each transformer block. While effective, adapters
+add inference latency due to sequential computation. LoRA avoids this by
+merging $BA$ into the original weight at inference time
+($W' = W + \frac{\alpha}{r}BA$), yielding zero additional latency.
+
+%% ─────────────────────────────────────────────────────────────
+\section{Explainability in Medical AI}
+\label{sec:lit_xai}
+
+Regulatory guidance (EU AI Act, FDA SaMD framework) and clinical common
+sense both require that a Medical AI system be able to show \emph{where}
+in the image it found evidence for its prediction.
+
+\subsection{Gradient-Weighted Class Activation Maps (Grad-CAM)}
+\label{subsec:gradcam_lit}
+
+Grad-CAM~\citep{selvaraju2017gradcam} computes a heatmap by
+back-propagating the gradient of the predicted class score $y^c$ with
+respect to the feature maps $A^k$ of the final convolutional (or attention)
+layer:
+\begin{equation}
+  \alpha_k^c = \frac{1}{Z} \sum_{i} \sum_{j}
+               \frac{\partial y^c}{\partial A^k_{ij}}
+  \label{eq:alpha}
+\end{equation}
+\begin{equation}
+  L^c_{\mathrm{Grad\text{-}CAM}} =
+  \mathrm{ReLU}\!\left(\sum_k \alpha_k^c A^k\right)
+  \label{eq:gradcam}
+\end{equation}
+The resulting map $L^c$ is resized to the input image resolution and
+superimposed as a colour overlay, highlighting regions that most
+positively contributed to class $c$.
+
+\medxplain{} computes Grad-CAM for every VQA forward pass, targeting the
+last block of the BiomedCLIP ViT, and renders the result in real-time
+in the Gradio interface (\S\ref{sec:ui}).
+
+\subsection{Integrated Gradients}
+\label{subsec:ig}
+
+Integrated Gradients~\citep{sundararajan2017integratedgradients} provide
+a provably axiomatic attribution satisfying completeness and sensitivity,
+making it a useful alternative or complement to Grad-CAM:
+\begin{equation}
+  \mathrm{IG}_i(\mathbf{x}) =
+  (x_i - x_i') \int_{\alpha=0}^{1}
+  \frac{\partial F(\mathbf{x}' + \alpha(\mathbf{x} - \mathbf{x}'))}
+       {\partial x_i}\, d\alpha
+  \label{eq:ig}
+\end{equation}
+where $\mathbf{x}'$ is a baseline (e.g., a black image). Implemented in
+\code{explainability/integrated\_gradients.py}.
+
+\subsection{Counterfactual Explanations}
+\label{subsec:counterfactual}
+
+\cite{goyal2019counterfactual} demonstrate counterfactual VQA: finding the
+minimal change to an image that flips the predicted answer. Implemented in
+\code{explainability/counterfactual.py} for offline analysis.
+
+%% ─────────────────────────────────────────────────────────────
+\section{Privacy and Compliance in Medical AI}
+\label{sec:lit_privacy}
+
+\subsection{HIPAA Safe Harbour De-identification}
+\label{subsec:hipaa}
+
+The US Department of Health and Human Services specifies
+18 categories of \textsc{PHI}~\citep{hipaa} that must be removed or
+generalised for data to be considered de-identified:
+names, geographic subdivisions, dates (other than year), phone/fax numbers,
+email addresses, social security numbers, medical record numbers,
+health plan beneficiary numbers, account numbers, certificate/licence numbers,
+vehicle identifiers, device identifiers/serial numbers, URLs, IP addresses,
+biometric identifiers, full-face photographs, and any other uniquely
+identifying number.
+
+\medxplain{}'s PHI scrubber (\S\ref{sec:phi}) removes all 18 categories
+from DICOM headers and employs regex $+$ optional Named Entity Recognition
+(NER) for free-text radiology reports.
+
+\subsection{DICOM Confidentiality Profile}
+\label{subsec:dicom_profile}
+
+The DICOM Standard Part 15 Annex E (PS~3.15~Annex~E) specifies the
+Basic Application Level Confidentiality Profile, enumerating DICOM
+attribute tags that must be scrubbed, anonymised, or pseudonymised
+before data leaves the institution~\citep{dicom2023}.
+\medxplain{} aligns its tag whitelist with this profile (\S\ref{sec:phi}).
+
+\subsection{GDPR and Data Minimisation}
+\label{subsec:gdpr}
+
+The General Data Protection Regulation~\citep{gdpr} applies to any
+processing of personal data of EU residents. The key principle of
+\emph{data minimisation} (Article~5(1)(c)) requires that only the minimum
+data necessary for the stated purpose be processed. The \medxplain{}
+pipeline enforces this by:
+\begin{itemize}
+  \item Never logging raw PHI (only SHA-256 file hashes in the audit log).
+  \item Setting \code{allow\_cloud\_upload: false} by default.
+  \item Stripping source file paths from the clean \code{DICOMStudy} object.
+\end{itemize}
+
+\subsection{Federated Learning}
+\label{subsec:federated}
+
+Federated Learning~\citep{mcmahan2017federated} trains models across
+multiple institutions without exchanging raw data, instead aggregating
+gradient updates. While beyond the scope of this thesis, it represents a
+natural extension of \medxplain{} for multi-site validation.
+
+%% ─────────────────────────────────────────────────────────────
+\section{Summary}
+\label{sec:lit_summary}
+
+Table~\ref{tab:related} compares \medxplain{} to representative related
+systems along five dimensions.
+
+\begin{table}[htbp]
+\centering
+\caption{Comparison of \medxplain{} to related Medical AI systems.}
+\label{tab:related}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{System} & \textbf{DICOM} & \textbf{PHI} & \textbf{VQA} & \textbf{XAI} & \textbf{Hospital} \\
+ & \textbf{Input} & \textbf{Scrub} & & & \textbf{Deploy} \\
+\midrule
+CheXNet~\citep{rajpurkar2017chexnet}      & \ding{53} & \ding{53} & \ding{53} & \ding{53} & Partial \\
+MAML-VQA~\citep{moon2022mamlvqa}          & \ding{53} & \ding{53} & \ding{51} & \ding{53} & \ding{53} \\
+LLaVA-Med~\citep{li2023llavamedical}      & \ding{53} & \ding{53} & \ding{51} & \ding{53} & \ding{53} \\
+RGRG~\citep{tanida2023rgrg}               & \ding{53} & \ding{53} & Partial   & Partial   & \ding{53} \\
+\midrule
+\textbf{\medxplain{} (this work)}         & \ding{51} & \ding{51} & \ding{51} & \ding{51} & \ding{51} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+\ding{51} = fully supported; \ding{53} = not supported; Partial = limited support.

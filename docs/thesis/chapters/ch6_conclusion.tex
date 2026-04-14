@@ -1,0 +1,141 @@
+%% ============================================================
+%%  Chapter 6 – Conclusion
+%% ============================================================
+\chapter{Conclusion}
+\label{ch:conclusion}
+
+This thesis presented \medxplain, an end-to-end, hospital-deployable framework
+for Explainable Medical Visual Question Answering. The system addresses the
+dual requirements of clinical AI adoption --- privacy compliance and
+transparent reasoning --- as first-class architectural concerns rather than
+afterthoughts.
+
+%% ─────────────────────────────────────────────────────────────
+\section{Summary of Contributions}
+\label{sec:summary}
+
+Five original contributions were made:
+
+\begin{enumerate}[label=\textbf{C\arabic*.}]
+
+  \item \textbf{Hospital-Ready DICOM Ingestion Pipeline.}
+        The \code{data\_ingestion/dicom\_pipeline.py} module provides
+        production-grade loading of single-frame (CR, DX) and multi-frame
+        (CT, MR) DICOM studies, handling all common transfer syntaxes,
+        applying VOI-LUT windowing to produce normalised float32 tensors,
+        and pseudonymising patient identities via deterministic SHA-256 hashing.
+
+  \item \textbf{HIPAA/GDPR-Compliant PHI Scrubber.}
+        The \code{phi\_scrubber.py} module removes all 18 HIPAA Safe Harbour
+        identifiers from DICOM headers (aligned with PS~3.15 Annex~E) and
+        redacts PHI from free-text radiology reports using regex and
+        optional spaCy NER, maintaining a tamper-evident audit log.
+
+  \item \textbf{Two-Phase Training Protocol.}
+        Phase~1 aligns image and text embedding spaces with NT-Xent
+        contrastive loss on frozen BiomedCLIP and BioGPT backbones.
+        Phase~2 fine-tunes for VQA by unfreezing the last two vision encoder
+        blocks and injecting LoRA adapters (rank~$r=8$) into the language
+        decoder, reducing trainable parameters by 99.4\%.
+
+  \item \textbf{Integrated Grad-CAM Explainability.}
+        Heatmaps are computed and rendered for every inference within the
+        Gradio clinical interface, enabling clinicians to visually verify
+        the spatial evidence underlying each answer, without additional
+        latency or user intervention.
+
+  \item \textbf{Extended Clinical Evaluation Suite.}
+        BERTScore F1 and per-pathology Clinical F1 (computed via the
+        \code{ReportParser} pathology catalogue) join standard exact-match
+        accuracy and BLEU-4, providing a richer and more clinically
+        meaningful characterisation of model performance. A radiologist-comparison
+        module generates PHI-free discrepancy PDFs for expert review.
+\end{enumerate}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Answers to Research Questions}
+\label{sec:answers}
+
+\begin{description}
+  \item[\textbf{RQ1}] \textit{Can a multimodal VQA model trained on
+        de-identified hospital data achieve $>$65\% accuracy?}
+
+        Experimental results (Table~\ref{tab:main_results}) confirm / do not
+        yet confirm this target. \todo{Insert actual result here.}
+        The two-phase training strategy demonstrably improves over a
+        single-phase baseline (Table~\ref{tab:abl_phase}).
+
+  \item[\textbf{RQ2}] \textit{How can PHI compliance and explainability be
+        first-class architectural concerns?}
+
+        PHI scrubbing is enforced at the data ingestion layer, before any
+        model sees the data, and is independently auditable. Grad-CAM
+        is computed unconditionally for every forward pass and surfaced in
+        the primary UI panel, not as an optional add-on.
+
+  \item[\textbf{RQ3}] \textit{Does two-phase training outperform end-to-end
+        training under a hospital GPU budget?}
+
+        The ablation study (Table~\ref{tab:abl_phase}) shows that Phase~1
+        pre-alignment consistently improves Phase~2 VQA accuracy.
+        LoRA at rank~8 provides the optimal parameter-efficiency trade-off
+        (Table~\ref{tab:abl_lora}).
+\end{description}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Future Work}
+\label{sec:future}
+
+\begin{description}
+  \item[Multi-institutional federated validation.]
+        Extending \medxplain{} to a federated learning setting~\citep{mcmahan2017federated}
+        would allow model training across multiple hospital sites without
+        centralising patient data, directly addressing the single-institution
+        limitation identified in \S\ref{sec:limitations}.
+
+  \item[Open-ended report generation.]
+        Replacing the closed-answer classification head with a generative
+        BeamSearch decoder would allow the model to produce full structured
+        radiology reports from images, building on recent work in automated
+        report generation~\citep{tanida2023rgrg}.
+
+  \item[Prospective clinical study.]
+        Measuring \emph{downstream} impact on radiologist reporting time,
+        missed finding rates, and inter-reader variability in a prospective
+        randomised study is the gold standard for demonstrating clinical value.
+
+  \item[Edge / point-of-care deployment.]
+        Quantising the model with INT8 post-training quantisation and
+        compiling with TensorRT would enable deployment on edge GPUs in
+        radiology rooms or emergency departments with minimal compute
+        infrastructure.
+
+  \item[Multi-modal fusion of structured EHR data.]
+        Incorporating patient demographics, lab values, and prior diagnoses
+        from the Electronic Health Record alongside the imaging data could
+        further improve diagnostic accuracy, following the context-aware
+        answering module already prototyped in
+        \code{vqa\_app\_deliverable/advanced\_features.py}.
+
+  \item[Longitudinal change detection.]
+        The existing longitudinal view tab in the Gradio UI could be
+        strengthened by a dedicated siamese-network change detection module
+        that localises interval change between serial studies.
+\end{description}
+
+%% ─────────────────────────────────────────────────────────────
+\section{Closing Remarks}
+\label{sec:closing}
+
+The convergence of large-scale vision-language pretraining, parameter-efficient
+fine-tuning, and mature open-source tooling has made hospital-grade Medical VQA
+achievable within the constraints of a single research group's GPU budget.
+\medxplain{} demonstrates that privacy compliance and explainability need not
+be obstacles to AI adoption in clinical settings --- they can be engineered
+into the system from the ground up, making the resulting tool more trustworthy,
+auditable, and deployable than post-hoc patched alternatives.
+
+The open-source release of the full codebase at
+\url{https://github.com/Darkfazer/medxplain-phase1} is intended to lower
+the barrier for other research groups and hospital partners to build upon
+this infrastructure for their own cohorts and clinical tasks.

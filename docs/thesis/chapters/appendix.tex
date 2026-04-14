@@ -1,0 +1,196 @@
+%% ============================================================
+%%  Appendices
+%% ============================================================
+
+%% ─────────────────────────────────────────────────────────────
+\chapter{Repository Map}
+\label{app:repo}
+
+\begin{lstlisting}[language=bash,
+                   caption={Complete \medxplain{} repository structure.},
+                   label={lst:repo}]
+medxplain-simple/
+|-- data_ingestion/              # Hospital-grade data pipeline
+|   |-- dicom_pipeline.py        # DICOM loader -> DICOMStudy tensors
+|   |-- phi_scrubber.py          # HIPAA/GDPR PHI removal + audit log
+|   |-- report_parser.py         # Radiology report parser
+|   `-- __init__.py
+|-- training/
+|   |-- train_vqa_two_phase.py   # Two-phase training script
+|   |-- trainer.py               # Base trainer (AMP, DDP)
+|   |-- losses.py                # NT-Xent, CE losses
+|   `-- augmentations.py
+|-- evaluation/
+|   |-- evaluate_metrics_spec.py # VQA Acc, BLEU, BERTScore, Clin. F1
+|   |-- clinical_validation.py   # Radiologist comparison + PDF reports
+|   |-- benchmark.py
+|   `-- visualization.py
+|-- explainability/
+|   |-- grad_cam.py              # Grad-CAM (pytorch-grad-cam)
+|   |-- integrated_gradients.py  # Axiomatic attribution
+|   `-- counterfactual.py
+|-- medical_vqa_infrastructure/  # Architecture layer
+|   |-- models/
+|   |   |-- vision_encoder.py    # BiomedCLIP wrapper
+|   |   |-- text_decoder.py      # BioGPT wrapper
+|   |   |-- fusion.py            # Cross-attention fusion
+|   |   `-- vqa_model.py         # Assembled VQA model
+|   |-- training/
+|   `-- config/
+|-- vqa_app_deliverable/         # Clinical Gradio interface
+|   |-- app_gradio.py            # Hospital-ready UI
+|   |-- model_inference.py       # Grad-CAM + VQA inference
+|   |-- advanced_features.py     # Clinical feature tabs
+|   |-- config.py
+|   `-- utils.py
+|-- config/
+|   `-- hospital_config.yaml     # Deployment configuration
+|-- tests/
+|   |-- test_dicom_pipeline.py   # DICOM pipeline unit tests
+|   `-- test_phi_scrubber.py     # PHI scrubber unit tests
+|-- docs/
+|   |-- thesis_structure.md
+|   `-- thesis/                  # This LaTeX thesis
+|-- Readme.md
+`-- requirements.txt
+\end{lstlisting}
+
+%% ─────────────────────────────────────────────────────────────
+\chapter{Hospital Configuration Reference}
+\label{app:config}
+
+Listing~\ref{lst:config} reproduces the annotated
+\code{hospital\_config.yaml} template.
+
+\begin{lstlisting}[language=yaml,
+                   caption={\code{config/hospital\_config.yaml} reference.},
+                   label={lst:config}]
+hospital:
+  name: "[REDACTED]"          # Never commit real name
+  data_root: "/data/dicom/"   # Override: MEDXPLAIN_DATA_ROOT
+
+privacy:
+  phi_scrubbing: true         # Must be true in production
+  allow_cloud_upload: false   # Never upload to external servers
+  audit_log_path: "./logs/phi_audit.log"
+  audit_log_rotation_days: 90
+
+model:
+  vision_encoder: "biomedclip"  # biomedclip | resnet50 | densenet121
+  language_model: "biogpt"      # biogpt | llama | gpt2
+  fusion_type: "cross_attention"
+  hidden_size: 768
+  use_lora: true
+  lora_rank: 8
+  lora_alpha: 16
+  temperature: 1.263
+
+inference:
+  batch_size: 1               # Process one study at a time
+  device: "cuda:0"
+  enable_explainability: true
+  confidence_threshold: 0.50  # Below this -> flag for review
+
+evaluation:
+  discrepancy_report_dir: "./discrepancy_reports/"
+  metrics: [accuracy, cohen_kappa, bleu, bertscore, clinical_f1]
+
+demo:
+  port: 7860
+  server_name: "0.0.0.0"
+  share: false                # Never true in hospital environment
+\end{lstlisting}
+
+%% ─────────────────────────────────────────────────────────────
+\chapter{Radiologist Validation Form}
+\label{app:form}
+
+The following form is administered to radiologists \emph{before} the
+model answer is revealed, to prevent anchoring bias.
+
+\bigskip
+
+\begin{mdframed}
+\textbf{MedXplain Validation Study --- Radiologist Annotation Form}
+
+\vspace{4mm}
+\begin{tabular}{@{}ll}
+Study ID (pseudonymised): & \underline{\hspace{6cm}} \\[2mm]
+Modality:                 & \underline{\hspace{6cm}} \\[2mm]
+Date:                     & \underline{\hspace{6cm}} \\
+\end{tabular}
+
+\vspace{4mm}
+\textbf{Clinical Question:}\\
+\underline{\hspace{12cm}}\\[1mm]
+\underline{\hspace{12cm}}
+
+\vspace{3mm}
+\textbf{Radiologist Answer} (write before seeing model output):\\
+\underline{\hspace{12cm}}\\[1mm]
+\underline{\hspace{12cm}}
+
+\vspace{2mm}
+\textbf{Confidence} (circle one): \quad 1 \quad 2 \quad 3 \quad 4 \quad 5
+
+\vspace{2mm}
+\textbf{Comments:}\\
+\underline{\hspace{12cm}}\\[1mm]
+\underline{\hspace{12cm}}
+
+\vspace{5mm}
+\rule{\textwidth}{0.4pt}
+
+\vspace{3mm}
+\textit{[Model output revealed below --- complete above before reading]}
+
+\vspace{3mm}
+\textbf{Model Answer:} \underline{\hspace{8cm}}
+\quad \textbf{Confidence:} \underline{\hspace{2cm}}\%
+
+\vspace{3mm}
+\textbf{Do you agree with the model?}
+\quad $\square$~Yes \quad $\square$~No \quad $\square$~Partially
+
+\textbf{Is the Grad-CAM explanation helpful?}
+\quad $\square$~Yes \quad $\square$~No \quad $\square$~Not applicable
+
+\textbf{Would you change your answer after seeing the model output?}
+\quad $\square$~Yes \quad $\square$~No
+
+\vspace{3mm}
+\textbf{Notes on Grad-CAM:}\\
+\underline{\hspace{12cm}}
+
+\vspace{5mm}
+Signature: \underline{\hspace{5cm}} \quad Date: \underline{\hspace{3cm}}
+\end{mdframed}
+
+%% ─────────────────────────────────────────────────────────────
+\chapter{Evaluation Output Format}
+\label{app:eval_output}
+
+Listing~\ref{lst:eval_output} shows the formatted report generated by
+\code{evaluation/evaluate\_metrics\_spec.py}.
+
+\begin{lstlisting}[language=bash,
+                   caption={Example output of the evaluation suite.},
+                   label={lst:eval_output}]
+========================================
+MEDXPLAIN EVALUATION REPORT
+========================================
+VQA Accuracy:          68.2%  (Target: >65%)  v
+BLEU-4:                0.28   (Target: >0.25) v
+BERTScore F1:          0.78   (Target: >0.75) v
+Clinical F1 (Macro):   0.63   (Target: >0.60) v
+----------------------------------------
+Per-Pathology F1:
+  Pneumothorax:              0.71
+  Pleural Effusion:          0.68
+  Pneumonia:                 0.59
+  Cardiomegaly:              0.54
+  Atelectasis:               0.51
+  Pulmonary Nodule:          0.48
+  Pulmonary Oedema:          0.44
+========================================
+\end{lstlisting}
