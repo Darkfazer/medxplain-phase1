@@ -1,0 +1,12 @@
+torch>=2.0.0
+torchvision
+transformers
+gradio
+streamlit
+pillow
+pandas
+scikit-learn
+matplotlib
+pytest
+pytest-cov
+pyyaml

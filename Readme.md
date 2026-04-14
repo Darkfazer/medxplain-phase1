@@ -1,349 +1,145 @@
-# MedXplain-Phase1: Medical Visual Question Answering (VQA) System
+# MedXplain: Comprehensive Medical AI & VQA Infrastructure
 
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 ![PyTorch](https://img.shields.io/badge/PyTorch-1.9+-red.svg)
 
-MedXplain is a Medical Visual Question Answering (VQA) system designed to answer questions about medical images. This phase-1 implementation includes complete training, evaluation, and explainability pipelines.
+MedXplain is an end-to-end multi-modal Medical Artificial Intelligence repository. The system bridges state-of-the-art Medical Image Classification logic with an advanced Visual Question Answering (VQA) framework tailored for the clinical domain.
+
+This repository integrates everything from generic dataset ingestion and Convolutional Neural Networks (CNN) benchmarking to highly interpretable Cross-Attention multi-modal models, explainability visualization (Grad-CAM), and a production-grade Gradio application.
 
 ---
 
-## Table of Contents
+## 📑 Table of Contents
 
-- [Features](#features)
-- [Installation](#installation)
-- [Dataset Preparation](#dataset-preparation)
-- [Training Pipeline](#training-pipeline)
-- [Configuration](#configuration)
-- [Evaluation](#evaluation)
-- [Explainability](#explainability)
-- [Debugging Tools](#debugging-tools)
-- [Project Structure](#project-structure)
-- [Troubleshooting](#troubleshooting)
-
----
-
-## Features
-
-- Multi-modal VQA model combining vision and language understanding
-- Cross-attention mechanisms for image-question interaction
-- Comprehensive training pipeline with fine-tuning support
-- Model explainability tools for medical AI interpretability
-- Ensemble learning capabilities
-- Extensive debugging and diagnostic tools
-- Real-time demo application
+- [Project Overview & Architecture](#overview)
+- [Repository Structure](#structure)
+- [Key Capabilities & Modules](#capabilities)
+    - [Phase 1: Image Classification](#phase-1-classification)
+    - [Phase 2: Medical VQA](#phase-2-vqa)
+    - [Explainability & Trust](#explainability)
+- [Installation & Quick Start](#installation)
+- [Running the Applications](#running)
+    - [Gradio VQA Demo](#gradio-demo)
+    - [Mock Mode Execution](#mock-mode)
+- [Evaluation & Benchmarking](#evaluation)
 
 ---
 
-## Installation
+<a name="overview"></a>
+## 🌍 Project Overview & Architecture
 
-**Prerequisites:** Python 3.8+, CUDA-capable GPU (recommended), 16 GB+ RAM
+MedXplain is designed in two modular phases:
+1. **Phase 1 (Medical Image Classification):** Foundational model development to analyze chest X-rays, histopathology, etc. using models ranging from DenseNet121, Transformers, and TorchXRayVision. Built to benchmark medical datasets accurately while incorporating conformal prediction metrics for risk management.
+2. **Phase 2 (Medical VQA Application):** Cross-modal integration, fusing visual embeddings from Phase 1 encoders with powerful Large Language Model (LLM) decoders (e.g., LLaMA, BioGPT). The VQA suite is augmented by features like retrieval-augmented answering via PubMed, longitudinal scanning, and clinical metadata integration (labs, patient notes).
+
+---
+
+<a name="structure"></a>
+## 📂 Repository Structure
+
+The architecture is highly modularizing training, inference, and UI into logical compartments:
+
+```text
+medxplain-simple/
+├── medical_vqa_infrastructure/  # Phase 2 Core: Pluggable Decoders/Encoders, Contextual Awareness, Mock workflows
+├── vqa_app_deliverable/         # Front-end Application suite: Gradio Demo, Evaluation Scripts
+├── models/                      # Architectural logic: CNNs (DenseNet, ResNet), Medical Transformers, VQA Adapters
+├── vqa/                         # Medical VQA operations: OOD (Out-of-Distribution) Detectors, PubMed Retriever 
+├── training/                    # Unified pipeline: Distributed trainers, custom losses, augmentations
+├── evaluation/                  # Comprehensive benchmarking: AUC, BLEU, Statistical Analysis, Calibration Metrics
+├── explainability/              # Interpretability tools: Grad-CAM, Integrated Gradients, Counterfactuals
+├── mock_data/ & data/           # Testing datasets & DataLoader abstractions
+└── configs/ & utils/            # Configurations, Utilities, and YAML schemas
+```
+
+---
+
+<a name="capabilities"></a>
+## 🚀 Key Capabilities & Modules
+
+### Phase 1: Classification & Risk Management 
+Located primarily in `models/` and `training/`.
+- **Pre-configured Adapters**: Seamless ingestion of domain-specific architectures (MedViT, TorchXRayVision) alongside classic baselines (DenseNet121, EfficientNet).
+- **Statistical Safety Net**: Incorporates rigorous statistical metrics, conformal prediction logic, and failure-mode analysis on medical data. 
+
+### Phase 2: Medical VQA Application
+Located in `medical_vqa_infrastructure/` and `vqa_app_deliverable/`.
+- **Pluggable Architecture**: Dynamically swap Vision Encoders and Text Decoders to match latency or accuracy constraints.
+- **Report & Context Aware**: Analyzes multi-modal inputs, correlating visual patterns directly with historical patient reports or longitudinal vitals.
+- **Automated Summarization**: Extracts visual differential diagnoses natively.
+
+### Explainability & Clinical Interfacing
+Located in `explainability/` and `vqa_app_deliverable/`.
+- **Visual Saliency**: Automatically trace predictions back to the image pixel-space with implementations of `grad_cam.py` and `integrated_gradients.py`. 
+- **OOD Detection**: Catch anomalies before processing.
+
+---
+
+<a name="installation"></a>
+## ⚙️ Installation & Quick Start
+
+**Prerequisites:** Python 3.8+, CUDA-capable GPU (Recommended for Full Models), 16 GB+ RAM.
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/Darkfazer/medxplain-phase1.git
-cd medxplain-phase1
+cd medxplain-simple
 
-# 2. Create a virtual environment (optional but recommended)
+# 2. Virtual Environment Setup (Recommended)
 python -m venv medxplain_env
 source medxplain_env/bin/activate  # Windows: medxplain_env\Scripts\activate
 
-# 3. Install dependencies
+# 3. Base Requirements
 pip install -r requirements.txt
+
+# 4. (Optional) Module-Specific Environments
+# For isolated VQA Deliverable workflows
+pip install -r vqa_app_deliverable/requirements.txt
+# For Infrastructure dependencies
+pip install -r medical_vqa_infrastructure/requirements.txt
 ```
 
 ---
 
-## Dataset Preparation
+<a name="running"></a>
+## 🖥️ Running the Applications
 
-### Required Structure
+### Launch the Gradio VQA Demo
 
-```
-data/
-├── images/
-│   ├── train/
-│   ├── val/
-│   └── test/
-├── annotations/
-│   ├── vqa_train.json
-│   ├── vqa_val.json
-│   └── vqa_test.json
-└── questions/
-    ├── questions_train.json
-    ├── questions_val.json
-    └── questions_test.json
-```
-
-### Dataset Configuration
-
-Update `configs/dataset_config.yaml`:
-
-```yaml
-data:
-  image_dir: "path/to/your/images"
-  annotation_dir: "path/to/annotations"
-  question_dir: "path/to/questions"
-  batch_size: 32
-  num_workers: 4
-```
-
-### Data Quality Check
+The main interactive endpoint is available under the `vqa_app_deliverable` directory. It uses Gradio to create an interactive Web GUI where users can upload medical scans and ask diagnostic questions.
 
 ```bash
-python check_data_quality.py --data_dir ./data
+cd vqa_app_deliverable/
+python app_gradio.py
 ```
+*A local web server will spin up on `http://0.0.0.0:7860/`.*
+
+### Mock Mode Execution 
+Need to test pipelines without massive 50GB dataset downloads or GPU weights? Enable **Mock Mode** natively across the infrastructure:
+
+```bash
+# Windows
+set MOCK_MODE=1
+
+# Linux / Mac
+export MOCK_MODE=1
+```
+This forces the backend logic (within `medical_vqa_infrastructure` and `vqa_app_deliverable`) to spoof predictions and bypass intense forward passes, speeding up UI testing and CI/CD operations cleanly.
 
 ---
 
-## Training Pipeline
+<a name="evaluation"></a>
+## 📊 Evaluation & Benchmarking
 
-### Quick Start
+MedXplain supports a unified suite for stress-testing representations:
 
-```bash
-python vqa_finetune.py
-```
-
-### Basic Training with Custom Config
-
-```bash
-python vqa_finetune.py \
-    --config ./configs/training_config.yaml \
-    --epochs 50 \
-    --batch_size 32 \
-    --learning_rate 1e-4
-```
-
-### Fine-tuning a Pretrained Model
-
-```bash
-python vqa_finetune.py \
-    --mode finetune \
-    --pretrained_model ./checkpoints/baseline_model.pth \
-    --freeze_backbone False \
-    --target_modules "cross_attention,classifier"
-```
-
-### Targeted Training
-
-```bash
-python run_target_training.py \
-    --target "cross_attention" \
-    --dataset "medical" \
-    --epochs 30 \
-    --lr_scheduler cosine
-```
-
-### Learning Rate Finder
-
-```bash
-python find_lr.py \
-    --model vqa_model \
-    --start_lr 1e-7 \
-    --end_lr 10 \
-    --num_iter 100
-```
-
-### Ensemble Training
-
-```bash
-python ensemble.py \
-    --n_models 5 \
-    --strategy bagging \
-    --save_dir ./ensemble_models
-```
-
-### Windows
-
-```bat
-run_pipeline.bat --mode train --config configs/training_config.yaml
-```
+- **Benchmarking & Visualization Pipeline (`evaluation/benchmark.py`)**: Computes AUC, BLEU scores, exact match accuracy natively.
+- **Diagnose Mismatches / Misclassified Samples**: Tracks false positives directly locally into `misclassified_samples/`.
+- **Run comprehensive suites** directly through the testing APIs:
+  ```bash
+  python vqa_app_deliverable/evaluation.py
+  ```
 
 ---
 
-## Configuration
-
-`configs/training_config.yaml`:
-
-```yaml
-model:
-  name: "medvqa_transformer"
-  vision_encoder: "resnet50"
-  text_encoder: "biobert"
-  hidden_size: 768
-  num_attention_heads: 12
-
-training:
-  optimizer: "adamw"
-  learning_rate: 1e-4
-  weight_decay: 0.01
-  scheduler:
-    name: "cosine"
-    warmup_steps: 1000
-
-data:
-  image_size: 224
-  max_question_length: 64
-  answer_vocab_size: 1000
-
-logging:
-  log_dir: "./logs"
-  save_interval: 5
-  eval_interval: 1
-```
-
----
-
-## Evaluation
-
-### Basic Evaluation
-
-```bash
-python -m evaluation.evaluate \
-    --checkpoint ./checkpoints/best_model.pth \
-    --test_data ./data/test
-```
-
-### Generate Accuracy Report
-
-```bash
-python diagnose_accuracy.py \
-    --model_path ./checkpoints/best_model.pth \
-    --output ./accuracy_report.txt \
-    --detailed True
-```
-
-### Analyze VQA Mismatches
-
-```bash
-python analyze_vqa_mismatch.py \
-    --predictions ./results/predictions.json \
-    --ground_truth ./data/annotations/vqa_test.json \
-    --output ./mismatch_analysis.json
-```
-
----
-
-## Explainability
-
-### Generate Model Explanations
-
-```bash
-python -m explainability.generate_explanations \
-    --model ./checkpoints/best_model.pth \
-    --image ./sample_images/chest_xray.jpg \
-    --question "What abnormality is present?" \
-    --method grad_cam \
-    --output ./explanations/
-```
-
-### Cross-Attention Visualization
-
-```bash
-python debug_cross_attention.py \
-    --model ./checkpoints/best_model.pth \
-    --sample ./data/sample.json \
-    --visualize True
-```
-
-### Quick Demo
-
-```bash
-python app.py --port 8501 --model ./checkpoints/best_model.pth
-```
-
-Then open your browser to `http://localhost:8501`
-
----
-
-## Debugging Tools
-
-### DataLoader Debug
-
-```bash
-python debug_dataloader.py \
-    --config ./configs/dataset_config.yaml \
-    --num_batches 10 \
-    --check_shapes True
-```
-
-### Single Sample Test
-
-```bash
-python test_single.py \
-    --image ./test_image.jpg \
-    --question "What is shown in this image?" \
-    --model ./checkpoints/best_model.pth
-```
-
-### RAG Test
-
-```bash
-python test_rag.py \
-    --query "pneumonia findings" \
-    --retriever ./models/retriever.pth \
-    --generator ./models/generator.pth
-```
-
----
-
-## Project Structure
-
-```
-medxplain-phase1/
-├── configs/            # Configuration files
-├── models/             # Model architectures
-├── training/           # Training scripts
-├── evaluation/         # Evaluation metrics and tools
-├── explainability/     # Model interpretability
-├── utils/              # Helper functions
-├── experiments/        # Experiment tracking
-├── vqa/                # Core VQA implementation
-├── app.py              # Demo application
-├── vqa_finetune.py     # Main training script
-├── requirements.txt    # Dependencies
-└── *.py                # Various utility scripts
-```
-
-> Checkpoints are saved to `./checkpoints/` by default. Logs are stored in `./logs/` for TensorBoard visualization. All scripts support `--help` for detailed usage. For distributed training, use `torch.distributed.launch`.
-
----
-
-## Troubleshooting
-
-**CUDA Out of Memory**
-
-Reduce batch size or use gradient accumulation:
-
-```bash
-python vqa_finetune.py --batch_size 16 --accumulation_steps 2
-```
-
-**Data Loading Errors**
-
-Verify dataset structure, check file permissions, and run:
-
-```bash
-python check_data_quality.py
-```
-
-**Poor Model Performance**
-
-Run the learning rate finder, check data quality, and try targeted training:
-
-```bash
-python find_lr.py
-python run_target_training.py
-```
-
-**Training Instability**
-
-Reduce learning rate, add gradient clipping, and increase warmup steps in `configs/training_config.yaml`.
-
----
-
-## License
-
-[Add your license information here]
-
-## Acknowledgments
-
-[Add acknowledgments here]
+*For deeper implementation details about individual components (such as VQA architecture configurations and fine-tuning commands), consult the localized `README.md` files present in `medical_vqa_infrastructure/` and `vqa_app_deliverable/`.*

@@ -1,0 +1,12 @@
+# Model Configuration
+vision_encoder:
+  type: "BiomedCLIP" # Options: ViT, ResNet, BiomedCLIP
+  pretrained: true
+
+text_decoder:
+  type: "BioGPT" # Options: BioGPT, LLaMA
+  pretrained: true
+
+fusion:
+  type: "cross-attention"
+  hidden_size: 768

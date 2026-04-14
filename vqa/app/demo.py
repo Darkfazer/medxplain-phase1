@@ -20,15 +20,29 @@ NUM_CLASSES = 14
 CLASS_NAMES = ["Atelectasis", "Cardiomegaly", "Effusion", "Infiltration", "Mass", "Nodule", 
                "Pneumonia", "Pneumothorax", "Consolidation", "Edema", "Emphysema", 
                "Fibrosis", "Pleural_Thickening", "Hernia"]
+PHASE1_CHECKPOINTS = [
+    "experiments/results/densenet121/best_model.pth",
+    "experiments/results/densenet121/swa_best_model.pth",
+]
 
 def load_phase1_model():
     """Loads a classification model from Phase 1 for predictions and Grad-CAM."""
     print("Loading Phase 1 Classifier...")
     model = DenseNetAdapter(num_classes=NUM_CLASSES)
-    ckpt = "experiments/results/densenet121/swa_best_model.pth"
-    if os.path.exists(ckpt):
-        print("  -> Loading SWA Checkpoint for GradCAM Phase 1 Backbone...")
-        model.load_state_dict(torch.load(ckpt, map_location=DEVICE))
+    loaded_ckpt = None
+    for ckpt in PHASE1_CHECKPOINTS:
+        if not os.path.exists(ckpt):
+            continue
+        try:
+            model.load_state_dict(torch.load(ckpt, map_location=DEVICE))
+            loaded_ckpt = ckpt
+            break
+        except Exception as e:
+            print(f"  -> Failed loading checkpoint {ckpt}: {e}")
+    if loaded_ckpt is not None:
+        print(f"  -> Loaded checkpoint: {loaded_ckpt}")
+    else:
+        print("  -> Warning: no checkpoint found, using random weights.")
     model.to(DEVICE)
     model.eval()
     return model
@@ -84,34 +98,45 @@ if CUSTOM_FUSION_MODEL is not None:
     OOD_DETECTOR = OODDetector(model_path="experiments/ood_model.pkl", vision_model=CUSTOM_FUSION_MODEL, device=DEVICE)
 
 def preprocess_image(pil_img):
-    """Standard ResNet/DenseNet normalization."""
+    """DenseNet validation-time preprocessing."""
+    pil_img = pil_img.convert("RGB")
     transform = T.Compose([
-        T.Resize((224, 224)),
+        T.Resize(256),
+        T.CenterCrop(224),
         T.ToTensor(),
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     return transform(pil_img).unsqueeze(0).to(DEVICE)
 
+def get_classification_results(input_tensor):
+    if PHASE1_ENSEMBLE is not None:
+        return PHASE1_ENSEMBLE.predict_classification(input_tensor)
+
+    with torch.no_grad():
+        logits = PHASE1_MODEL(input_tensor)
+        probs = torch.sigmoid(logits)[0].cpu().numpy()
+    return {CLASS_NAMES[i]: float(probs[i]) for i in range(len(CLASS_NAMES))}
+
 def predict_classification(image):
     if image is None: return "Please upload an image.", None
-    
+
     input_tensor = preprocess_image(image)
-    
-    if PHASE1_ENSEMBLE is not None:
-        results = PHASE1_ENSEMBLE.predict_classification(input_tensor)
-    else:
-        with torch.no_grad():
-            logits = PHASE1_MODEL(input_tensor)
-            probs = torch.sigmoid(logits)[0].cpu().numpy()
-        results = {CLASS_NAMES[i]: float(probs[i]) for i in range(len(CLASS_NAMES))}
-            
-    filtered_results = {k: v for k, v in results.items() if v >= 0.3}
-    if not filtered_results:
-        # If nothing > 0.3, show top 1 with a warning
-        top_k = sorted(results.items(), key=lambda x: x[1], reverse=True)[0]
-        filtered_results = {f"⚠️ {top_k[0]} (Low Confidence)": top_k[1]}
-        
-    top_diagnosis = sorted(results.items(), key=lambda x: x[1], reverse=True)[0]
+    results = get_classification_results(input_tensor)
+
+    ranked = sorted(results.items(), key=lambda x: x[1], reverse=True)
+    filtered_results = {k: v for k, v in ranked if v >= 0.3}
+
+    if len(filtered_results) < 3:
+        for label, score in ranked:
+            if label not in filtered_results:
+                filtered_results[label] = score
+            if len(filtered_results) >= 3:
+                break
+
+    if not any(score >= 0.3 for score in filtered_results.values()):
+        filtered_results = {f"Low confidence: {k}": v for k, v in filtered_results.items()}
+
+    top_diagnosis = ranked[0]
     
     top_index = CLASS_NAMES.index(top_diagnosis[0])
     target_layer = PHASE1_MODEL.model.features[-1] 
@@ -133,14 +158,7 @@ def chat_vqa(image, question, model_choice):
     
     # Check if confidence threshold is too low from Phase 1 prior to answering
     input_tensor = preprocess_image(image)
-    
-    if PHASE1_ENSEMBLE is not None:
-        results = PHASE1_ENSEMBLE.predict_classification(input_tensor)
-    else:
-        with torch.no_grad():
-            logits = PHASE1_MODEL(input_tensor)
-            probs = torch.sigmoid(logits)[0].cpu().numpy()
-        results = {CLASS_NAMES[i]: float(probs[i]) for i in range(len(CLASS_NAMES))}
+    results = get_classification_results(input_tensor)
         
     max_conf = max(results.values())
     low_conf_prefix = ""

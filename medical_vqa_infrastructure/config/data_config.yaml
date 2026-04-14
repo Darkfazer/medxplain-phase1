@@ -1,0 +1,5 @@
+# Data Configuration
+dataset_path: "/path/to/dataset" # TODO: Update with your dataset path
+image_size: 224
+batch_size: 32
+num_workers: 4

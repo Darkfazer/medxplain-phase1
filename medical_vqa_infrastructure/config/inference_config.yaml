@@ -1,0 +1,4 @@
+# Inference Calibration
+temperature: 1.263
+latency_budget_ms: 5000
+test_batch_size: 1
