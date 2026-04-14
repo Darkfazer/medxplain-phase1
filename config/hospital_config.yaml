@@ -1,0 +1,115 @@
+# =============================================================================
+# hospital_config.yaml
+# MedXplain – Hospital Deployment Configuration
+#
+# ⚠  IMPORTANT:
+#   - Keep this file OUT of version control (add to .gitignore)
+#   - Never fill in real patient data paths or institution names here
+#   - Override sensitive fields via environment variables in production
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Hospital identity  (values MUST be reviewed by your data-governance team)
+# ---------------------------------------------------------------------------
+hospital:
+  name: "[REDACTED]"                     # Do not commit your hospital name
+  site_id: "SITE_001"                    # Internal identifier for multi-site deployments
+  data_root: "/data/hospital/dicom/"     # Override with MEDXPLAIN_DATA_ROOT env var
+  timezone: "UTC"
+
+# ---------------------------------------------------------------------------
+# Privacy & compliance
+# ---------------------------------------------------------------------------
+privacy:
+  phi_scrubbing: true                    # Always true in production
+  allow_cloud_upload: false              # Air-gapped: never send data outside
+  pseudonymisation_salt_env: "MEDXPLAIN_PSEUDO_SALT"   # Env var holding the salt
+  audit_log_path: "./logs/phi_audit.log"
+  audit_log_rotation_days: 90           # Retain audit logs for 90 days
+  enable_ner_phi_detection: true         # Use spaCy NER for report scrubbing
+
+# ---------------------------------------------------------------------------
+# Model configuration
+# ---------------------------------------------------------------------------
+model:
+  vision_encoder: "biomedclip"           # Options: biomedclip, resnet50, densenet121, medvit
+  language_model: "biogpt"              # Options: biogpt, llama, gpt2
+  fusion_type: "cross_attention"
+  hidden_size: 768
+  num_attention_heads: 12
+
+  # LoRA fine-tuning settings (reduces GPU memory requirements)
+  use_lora: true
+  lora_rank: 8
+  lora_alpha: 16
+  lora_target_modules:
+    - "query"
+    - "value"
+
+  # Calibration (temperature from Phase 1 validation)
+  temperature: 1.263
+
+  # Checkpoints – override with absolute paths or env vars
+  vision_encoder_path: ""               # MEDXPLAIN_VISION_ENCODER_PATH
+  language_model_path: ""               # MEDXPLAIN_LANGUAGE_MODEL_PATH
+  fusion_model_path: ""                 # MEDXPLAIN_FUSION_MODEL_PATH
+
+# ---------------------------------------------------------------------------
+# Inference
+# ---------------------------------------------------------------------------
+inference:
+  batch_size: 1                         # Hospital setting: process one study at a time
+  device: "cuda:0"                      # "cpu" for CPU-only servers
+  enable_explainability: true           # Generate Grad-CAM for every prediction
+  max_question_length: 128
+  max_answer_length: 256
+  confidence_threshold: 0.50           # Below this → flag for radiologist review
+
+# ---------------------------------------------------------------------------
+# Data ingestion
+# ---------------------------------------------------------------------------
+data_ingestion:
+  dicom:
+    supported_modalities:
+      - "CR"    # Computed Radiography (plain chest X-ray)
+      - "DX"    # Digital X-ray
+      - "CT"    # Computed Tomography
+      - "MR"    # Magnetic Resonance
+      - "US"    # Ultrasound
+      - "PT"    # Positron Emission Tomography
+      - "NM"    # Nuclear Medicine
+    target_image_size: [224, 224]        # Pixels (width × height) for model input
+    normalisation: "window"             # Options: window, minmax
+    require_pixel_data: true
+  report:
+    use_section_splitter: true
+    use_ner_pathology: false            # True if spaCy with sci model is installed
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+evaluation:
+  discrepancy_report_dir: "./discrepancy_reports/"
+  max_pdf_reports: 200
+  metrics:
+    - "accuracy"
+    - "cohen_kappa"
+    - "bleu"
+    - "exact_match"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: "INFO"                         # DEBUG / INFO / WARNING / ERROR
+  log_dir: "./logs/"
+  structured_json: true                 # Machine-readable log format for SIEM integration
+
+# ---------------------------------------------------------------------------
+# Demo application (Gradio)
+# ---------------------------------------------------------------------------
+demo:
+  port: 7860
+  server_name: "0.0.0.0"              # Localhost only; do not expose to public internet
+  share: false                          # Never set to true in a hospital environment
+  max_upload_size_mb: 512
