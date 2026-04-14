@@ -76,10 +76,10 @@ def train_phase1():
     scheduler = CosineAnnealingLR(optimizer, T_max=5) 
     
     config = {
-        'epochs': 5,
+        'epochs': 10,
         'gradient_accumulation_steps': 2,
         'mixed_precision': True,
-        'early_stopping_patience': 15
+        'early_stopping_patience': 5
     }
     
     print("\n--- Training Engine Boot Sequence ---")
