@@ -1,5 +1,12 @@
 import os
+import sys
 import argparse
+
+# Ensure the project root (medical_vqa_infrastructure/) is on sys.path so that
+# sibling packages like `training`, `models`, `evaluation`, etc. are importable
+# regardless of whether the package was installed with `pip install -e .`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from training.trainer import Trainer
 
 def main():
