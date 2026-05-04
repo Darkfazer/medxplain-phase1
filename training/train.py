@@ -1,138 +1,223 @@
-import os
+"""
+training/train.py
+=================
+Fine-tune BLIP-1 (blip-vqa-base) on VQA-RAD.
+
+Usage
+-----
+    # As a script (both work):
+    python training/train.py --epochs 5
+    python -m training.train --epochs 5
+
+    Full CLI:
+    python training/train.py --config configs/config.py --mode train --epochs 5
+
+Consistent with backend.py which also loads blip-vqa-base.
+"""
+from __future__ import annotations
+
+# ── Bootstrap: ensure project root is on sys.path so 'configs', 'data', etc.
+#    are importable whether this file is run as a script OR as a module.
 import sys
+from pathlib import Path
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+# ─────────────────────────────────────────────────────────────────────────────
+
+import argparse
+import logging
+import os
+
+# ── cuBLAS 12.4 BF16 definitive fix ────────────────────────────────────────────
+# Python 3.13 only has torch 2.6+cu124 on Windows.  cuBLAS 12.4 routes FP32
+# F.linear calls through cublasLt with BF16 (computeType=77), crashing BLIP.
+#
+# CUBLASLT_DISABLE_TENSOR_CORE=1 forces legacy SGEMM (non-cublasLt path)
+# and completely eliminates the BF16 routing bug on all Ampere/Ada GPUs.
+# Must be set before any CUDA context is created (before torch is imported).
+os.environ["CUBLASLT_DISABLE_TENSOR_CORE"] = "1"
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+# ──────────────────────────────────────────────────────────────────────────
+
 import torch
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
-from transformers import Blip2Processor
+from transformers import BlipProcessor   # ← BLIP-1 processor
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import configs.config as cfg
 from data.dataset import get_dataloaders
 from models.vqa_model import VQAModel
 from evaluation.metrics import evaluate_batch, aggregate_metrics
 
-def train():
-    print(f"Loading processor for {cfg.MODEL_NAME}...")
-    processor = Blip2Processor.from_pretrained(cfg.MODEL_NAME)
-    
-    print("Preparing dataloaders...")
-    train_loader, val_loader = get_dataloaders(processor, batch_size=cfg.BATCH_SIZE)
-    
-    print("Initializing model...")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+log = logging.getLogger(__name__)
+
+
+def train(epochs: int = cfg.EPOCHS, batch_size: int = cfg.BATCH_SIZE) -> None:
+    """Fine-tune VQAModel (BLIP-1) on VQA-RAD.
+
+    Parameters
+    ----------
+    epochs     : number of training epochs (overrides configs/config.py)
+    batch_size : batch size (overrides configs/config.py)
+    """
+    log.info("Loading BlipProcessor for %s …", cfg.MODEL_NAME)
+    processor = BlipProcessor.from_pretrained(cfg.MODEL_NAME)
+
+    log.info("Preparing dataloaders …")
+    train_loader, val_loader, _ = get_dataloaders(processor, batch_size=batch_size)
+
+    log.info("Initialising model …")
     model = VQAModel(freeze_vision=True)
-    
-    # 1. OPTIMAL LEARNING RATE (Found from find_lr.py)
-    optimal_lr = 1.82e-03 
-    
-    optimizer = AdamW(model.parameters(), lr=optimal_lr, weight_decay=cfg.WEIGHT_DECAY)
-    
-    # 2. STEEP CYCLIC SCHEDULER
-    from torch.optim.lr_scheduler import CosineAnnealingLR
-    scheduler = CosineAnnealingLR(optimizer, T_max=cfg.EPOCHS)
-    
-    # 3. DYNAMIC CLASS WEIGHTS IMPL (Mock logic for VQA-RAD multi-hot adaptation)
-    # Note: For genuine classification tasks (Phase 1), targets shape is [B, 14]
-    # For VQA tasks (Phase 2), targets shape is [B, SeqLen]. 
-    # Since VQA generate uses CrossEntropy internally over vocab, weighting the vocab token 
-    # frequency is complex. The user prompt requested WeightedBCEWithLogitsLoss which applies to Phase 1.
-    # Therefore, we will instantiate it here as requested by prompt to show it works, but pass 
-    # standard CrossEntropy for the VQA loop.
-    import pandas as pd
-    from training.losses import compute_class_weights, WeightedBCEWithLogitsLoss
-    
-    # Mocking metadata target distribution for 14 classes (from NIH)
-    mock_df = pd.DataFrame(torch.randint(0, 2, (1000, 14)).numpy())
-    class_weights = compute_class_weights(mock_df).to(cfg.DEVICE)
-    phase1_criterion = WeightedBCEWithLogitsLoss(pos_weight=class_weights)
-    print(f"Instantiated WeightedBCEWithLogitsLoss with weights: {class_weights}")
-    
-    best_loss = float('inf')
+
+    # ── FP32 GPU setup ──────────────────────────────────────────────────────────
+    # CUBLASLT_DISABLE_TENSOR_CORE=1 (set above before torch import) forces
+    # legacy SGEMM and bypasses the cublasLt BF16 heuristic entirely.
+    device_to_use = cfg.DEVICE
+    model = model.float().to(device_to_use)
+    log.info("Training device: %s  (CUDA %s)", device_to_use,
+             torch.version.cuda if device_to_use == "cuda" else "N/A")
+    torch.set_float32_matmul_precision("highest")
+    if device_to_use == "cuda":
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+        torch.backends.cudnn.allow_tf32 = False
+    # ────────────────────────────────────────────────────────────────────
+
+    optimizer = AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=cfg.LEARNING_RATE,
+        weight_decay=cfg.WEIGHT_DECAY,
+    )
+    scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
+
     save_dir = os.path.join(cfg.BASE_DIR, "experiments")
     os.makedirs(save_dir, exist_ok=True)
-    
-    print("Starting training with Progressive Resizing & Cosine Annealing...")
-    for epoch in range(cfg.EPOCHS):
-        model.train()
-        total_train_loss = 0
-        
-        loop = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.EPOCHS} [Train]")
+
+    best_loss = float("inf")
+
+    log.info("Starting training for %d epoch(s) …", epochs)
+    for epoch in range(epochs):
+        # ── Training ─────────────────────────────────────────────────────────
+        model.model.train()
+        total_train_loss = 0.0
+
+        loop = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs} [Train]")
         for batch in loop:
-            # Forward pass
+            labels = batch["labels"]
+            # Replace -100 (loss-mask sentinel) with pad_id=0 before passing
+            # to BLIP's forward; the model ignores those positions in the loss
+            # internally via its own masking, but the embedding lookup crashes
+            # if it receives -100 as an index.
+            decoder_labels = labels.clone()
+            decoder_labels[decoder_labels == -100] = 0
+
             outputs = model(
-                pixel_values=batch['pixel_values'],
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask'],
-                labels=batch['labels']
+                pixel_values=batch["pixel_values"],
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=decoder_labels,
             )
-            
             loss = outputs.loss
-            
-            # Backward
+
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            
+
             total_train_loss += loss.item()
-            loop.set_postfix(loss=loss.item())
-            
-        avg_train_loss = total_train_loss/len(train_loader)
-        print(f"Epoch {epoch+1} Train Loss: {avg_train_loss:.4f}")
-        
-        # Validation
-        model.eval()
-        total_val_loss = 0
-        all_metrics = []
-        
+            loop.set_postfix(loss=f"{loss.item():.4f}")
+
+        avg_train_loss = total_train_loss / len(train_loader)
+        log.info("Epoch %d  train_loss=%.4f", epoch + 1, avg_train_loss)
+
+        # ── Validation ───────────────────────────────────────────────────────
+        model.model.eval()
+        total_val_loss = 0.0
+        all_metrics: list[dict] = []
+
         with torch.no_grad():
-            loop = tqdm(val_loader, desc=f"Epoch {epoch+1} [Val]")
+            loop = tqdm(val_loader, desc=f"Epoch {epoch + 1}/{epochs} [Val]")
             for batch in loop:
+                labels = batch["labels"]
+                decoder_labels = labels.clone()
+                decoder_labels[decoder_labels == -100] = 0
+
                 outputs = model(
-                    pixel_values=batch['pixel_values'],
-                    input_ids=batch['input_ids'],
-                    attention_mask=batch['attention_mask'],
-                    labels=batch['labels']
+                    pixel_values=batch["pixel_values"],
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    labels=decoder_labels,
                 )
                 total_val_loss += outputs.loss.item()
-                
-                # Generate answers for metrics
+
                 generated_ids = model.generate(
-                    pixel_values=batch['pixel_values'],
-                    input_ids=batch['input_ids'],
-                    attention_mask=batch['attention_mask']
+                    pixel_values=batch["pixel_values"],
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
                 )
-                
-                # Decode
                 preds = processor.batch_decode(generated_ids, skip_special_tokens=True)
-                labels = batch['answers']
-                q_types = batch['answer_types']
-                
-                # The prompt has the format "Question: xxx Answer: "
-                # Blip2 generation sometimes returns the prompt + answer.
-                # Let's clean the prompt out if it's there.
-                clean_preds = []
-                for p, mask in zip(preds, batch['input_ids']):
-                    # In true BLIP-2 VQA, the prompt is encoded into input_ids
-                    # We can just use the decoded text directly, it usually just outputs the answer
-                    # due to max_new_tokens. If it repeats, we can strip.
-                    clean_preds.append(p.strip())
-                
-                batch_metrics = evaluate_batch(clean_preds, labels, q_types)
+                preds = [p.strip() for p in preds]
+
+                batch_metrics = evaluate_batch(
+                    preds, batch["answers"], batch["answer_types"]
+                )
                 all_metrics.append(batch_metrics)
-                
-        avg_val_loss = total_val_loss/len(val_loader)
-        agg_metrics = aggregate_metrics(all_metrics)
-        
-        print(f"Epoch {epoch+1} Val Loss: {avg_val_loss:.4f}")
-        for k, v in agg_metrics.items():
-            print(f"  {k}: {v:.2f}")
-            
-        # Save best model
+
+        avg_val_loss = total_val_loss / len(val_loader)
+        agg = aggregate_metrics(all_metrics)
+        log.info("Epoch %d  val_loss=%.4f", epoch + 1, avg_val_loss)
+        for k, v in agg.items():
+            log.info("  %s: %.2f", k, v)
+
+        # Save checkpoint only when val loss improves
         if avg_val_loss < best_loss:
             best_loss = avg_val_loss
-            torch.save(model.state_dict(), os.path.join(save_dir, "best_model.pth"))
-            print("Saved new best model.")
-            
+            model.save_checkpoint(os.path.join(save_dir, "best_vqa_model.pth"))
+            log.info("Saved new best model (val_loss=%.4f)", best_loss)
+
         scheduler.step()
 
+    log.info("Training complete. Best val_loss=%.4f", best_loss)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  CLI
+# ─────────────────────────────────────────────────────────────────────────────
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Fine-tune BLIP-1 on VQA-RAD",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument(
+        "--config", default="configs/config.py",
+        help="Path to config file (informational; settings live in configs/config.py)",
+    )
+    p.add_argument(
+        "--mode", default="train", choices=["train", "eval"],
+        help="'train' to fine-tune, 'eval' to evaluate only",
+    )
+    p.add_argument(
+        "--epochs", type=int, default=cfg.EPOCHS,
+        help="Number of training epochs (overrides configs/config.py)",
+    )
+    p.add_argument(
+        "--batch_size", type=int, default=cfg.BATCH_SIZE,
+        help="Batch size",
+    )
+    return p.parse_args()
+
+
 if __name__ == "__main__":
-    train()
+    args = _parse_args()
+    log.info("Config  : %s", args.config)
+    log.info("Mode    : %s", args.mode)
+    log.info("Epochs  : %d", args.epochs)
+
+    if args.mode == "train":
+        train(epochs=args.epochs, batch_size=args.batch_size)
+    else:
+        log.info("Eval-only mode: loading best checkpoint and running validation.")
+        # Evaluation-only path (extend as needed)
+        log.warning("Eval-only mode not yet implemented; run with --mode train.")

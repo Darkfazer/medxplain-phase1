@@ -1,137 +1,112 @@
 """
-clinical_validation.py
-======================
-Generate a clinical validation report suitable for radiologist review.
+evaluation/clinical_validation.py
+===================================
+Generate a clinical validation report for radiologist review.
 
-Features:
-  - Loads a CSV of ground-truth radiologist annotations
-  - Computes Cohen's Kappa and exact-match accuracy vs. gold standard
-  - Identifies model–radiologist discrepancies
-  - Produces a PDF discrepancy report per sample (image, question,
-    model answer + confidence, radiologist answer, Grad-CAM overlay)
-  - PHI-free output: patient-identifying info must already be scrubbed
-    before passing to this module
-
-CSV format expected:
-    image_id, question, radiologist_answer
-    001.png,  "Is there cardiomegaly?", "Yes"
-    ...
-
-Dependencies:
-    pip install pandas scikit-learn Pillow reportlab torch
-
-Usage:
-    from evaluation.clinical_validation import generate_validation_report
-    metrics = generate_validation_report(
-        model=vqa_model,
-        validation_csv="data/radiologist_annotations.csv",
-        output_dir="discrepancy_reports/",
-    )
-    # metrics → {"accuracy": 0.82, "cohen_kappa": 0.74, "n_discrepancies": 18}
+Fixes vs. original:
+  - tempfile.mktemp() → NamedTemporaryFile(delete=False) (safe)
+  - Full graceful degradation when optional deps (pandas, reportlab, PIL) absent
+  - Clean public API: generate_validation_report()
 """
-
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
-import torch
-import torch.nn as nn
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Optional heavy imports with graceful fallback
+# Optional imports with graceful fallback
 # ---------------------------------------------------------------------------
 try:
     import pandas as pd
-    _PANDAS_AVAILABLE = True
+    _PANDAS = True
 except ImportError:
-    _PANDAS_AVAILABLE = False
+    _PANDAS = False
 
 try:
-    from sklearn.metrics import cohen_kappa_score, accuracy_score
-    _SKLEARN_AVAILABLE = True
+    from sklearn.metrics import cohen_kappa_score
+    _SKLEARN = True
 except ImportError:
-    _SKLEARN_AVAILABLE = False
-    logger.warning("scikit-learn not installed: install with pip install scikit-learn")
+    _SKLEARN = False
+    log.warning("scikit-learn not installed – install with: pip install scikit-learn")
 
 try:
     from PIL import Image as PILImage
-    _PIL_AVAILABLE = True
+    _PIL = True
 except ImportError:
-    _PIL_AVAILABLE = False
+    _PIL = False
 
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import (
-        Image as RLImage,
-        Paragraph,
-        SimpleDocTemplate,
-        Spacer,
-        Table,
-        TableStyle,
+        Image as RLImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
     )
     from reportlab.lib import colors as rl_colors
-    _REPORTLAB_AVAILABLE = True
+    _REPORTLAB = True
 except ImportError:
-    _REPORTLAB_AVAILABLE = False
-    logger.warning(
-        "reportlab not installed – PDF export disabled. "
-        "Install with: pip install reportlab"
-    )
+    _REPORTLAB = False
+    log.warning("reportlab not installed – PDF export disabled: pip install reportlab")
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _normalise_answer(answer: str) -> str:
-    """Lowercase, strip, and collapse whitespace for answer comparison."""
-    return " ".join(answer.lower().strip().split())
+def _normalise(s: str) -> str:
+    return " ".join(s.lower().strip().split())
 
 
-def _answers_match(pred: str, gold: str) -> bool:
-    """
-    Flexible string matching: exact match after normalisation.
-    Extend with fuzzy matching (e.g. BLEU) if needed.
-    """
-    return _normalise_answer(pred) == _normalise_answer(gold)
+def _match(pred: str, gold: str) -> bool:
+    return _normalise(pred) == _normalise(gold)
 
 
-def _compute_kappa(
-    predictions: List[str],
-    references: List[str],
-) -> float:
-    """
-    Cohen's Kappa for agreement between model predictions and radiologist answers.
-
-    If scikit-learn is unavailable, falls back to a manual kappa calculation
-    for binary (yes/no) tasks.
-    """
-    if _SKLEARN_AVAILABLE:
+def _kappa(preds: List[str], refs: List[str]) -> float:
+    if _SKLEARN:
         try:
-            return float(cohen_kappa_score(references, predictions))
+            return float(cohen_kappa_score(refs, preds))
         except Exception as exc:
-            logger.warning("cohen_kappa_score failed: %s. Using raw accuracy.", exc)
-
-    # Fallback: simple accuracy as agreement proxy
-    matches = sum(1 for p, r in zip(predictions, references) if _answers_match(p, r))
-    return matches / max(len(predictions), 1)
+            log.warning("cohen_kappa_score failed: %s – using accuracy proxy.", exc)
+    matches = sum(1 for p, r in zip(preds, refs) if _match(p, r))
+    return matches / max(len(preds), 1)
 
 
-# ---------------------------------------------------------------------------
-# PDF report builder
-# ---------------------------------------------------------------------------
+def _load_csv(csv_path: str) -> List[Dict[str, str]]:
+    if _PANDAS:
+        try:
+            return pd.read_csv(csv_path).to_dict(orient="records")
+        except Exception as exc:
+            log.error("pandas CSV read failed: %s", exc)
+    rows: List[Dict[str, str]] = []
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+    except OSError as exc:
+        log.error("Cannot open CSV %s: %s", csv_path, exc)
+    return rows
 
-def _build_pdf_report(
+
+def _load_image(path: str):  # → Optional[PILImage.Image]
+    if not _PIL:
+        log.error("Pillow not installed – cannot load images.")
+        return None
+    try:
+        return PILImage.open(path).convert("RGB")
+    except Exception as exc:
+        log.warning("Cannot open image %s: %s", path, exc)
+        return None
+
+
+def _build_pdf(
     output_path: str,
     image_path: str,
     question: str,
@@ -141,57 +116,32 @@ def _build_pdf_report(
     gradcam_array: Optional[np.ndarray],
     sample_id: str,
 ) -> None:
-    """
-    Build a single-page PDF discrepancy report for one sample.
-
-    Parameters
-    ----------
-    output_path:
-        Full path where the PDF will be saved.
-    image_path:
-        Path to the (de-identified) source image.
-    question:
-        Clinical question posed to the model.
-    model_answer:
-        Answer generated by the VQA model.
-    confidence:
-        Confidence score in [0, 1].
-    radiologist_answer:
-        Ground-truth radiologist label from the CSV.
-    gradcam_array:
-        Optional (H, W, 3) uint8 Grad-CAM overlay numpy array.
-    sample_id:
-        Unique identifier used in the report header.
-    """
-    if not _REPORTLAB_AVAILABLE:
-        logger.warning(
-            "PDF generation skipped for %s – reportlab not installed.", sample_id
-        )
+    """Build a single-page PDF discrepancy report."""
+    if not _REPORTLAB:
+        log.warning("PDF skipped for %s – reportlab not installed.", sample_id)
         return
 
-    doc   = SimpleDocTemplate(output_path, pagesize=A4)
-    story = []
+    doc    = SimpleDocTemplate(output_path, pagesize=A4)
+    story  = []
     styles = getSampleStyleSheet()
-
-    ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts     = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     story.append(Paragraph("MedXplain Clinical Validation – Discrepancy Report", styles["Title"]))
     story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph(f"Sample ID: {sample_id} &nbsp;&nbsp;|&nbsp;&nbsp; Generated: {ts}", styles["Normal"]))
+    story.append(Paragraph(f"Sample ID: {sample_id} | Generated: {ts}", styles["Normal"]))
     story.append(Spacer(1, 0.5 * cm))
-    story.append(Paragraph("<b>⚠ This report contains no Patient Health Information (PHI).</b>", styles["Normal"]))
+    story.append(Paragraph("<b>⚠ This report contains no PHI.</b>", styles["Normal"]))
     story.append(Spacer(1, 0.7 * cm))
 
-    # Question / answers summary table
-    summary_data = [
-        ["Field", "Value"],
-        ["Question", question],
-        ["Model Answer", model_answer],
-        ["Confidence", f"{confidence * 100:.1f}%"],
-        ["Radiologist Answer", radiologist_answer],
-        ["Match", "✗ DISCREPANCY"],
+    data = [
+        ["Field",               "Value"],
+        ["Question",            question],
+        ["Model Answer",        model_answer],
+        ["Confidence",          f"{confidence * 100:.1f}%"],
+        ["Radiologist Answer",  radiologist_answer],
+        ["Match",               "✗ DISCREPANCY"],
     ]
-    tbl = Table(summary_data, colWidths=[4 * cm, 13 * cm])
+    tbl = Table(data, colWidths=[4 * cm, 13 * cm])
     tbl.setStyle(TableStyle([
         ("BACKGROUND",    (0, 0), (-1, 0),  rl_colors.HexColor("#2c3e50")),
         ("TEXTCOLOR",     (0, 0), (-1, 0),  rl_colors.white),
@@ -205,213 +155,145 @@ def _build_pdf_report(
     story.append(tbl)
     story.append(Spacer(1, 0.7 * cm))
 
-    # Source image
     if os.path.isfile(image_path):
         story.append(Paragraph("Source Image (de-identified):", styles["Heading3"]))
         try:
             story.append(RLImage(image_path, width=8 * cm, height=8 * cm))
         except Exception as exc:
-            story.append(Paragraph(f"[Image could not be embedded: {exc}]", styles["Normal"]))
+            story.append(Paragraph(f"[Image embed failed: {exc}]", styles["Normal"]))
         story.append(Spacer(1, 0.4 * cm))
 
-    # Grad-CAM overlay
-    if gradcam_array is not None:
+    if gradcam_array is not None and _PIL:
         try:
-            import tempfile
-            tmp_cam = tempfile.mktemp(suffix=".png")
-            pil_cam = PILImage.fromarray(gradcam_array.astype(np.uint8))
-            pil_cam.save(tmp_cam)
+            # Use NamedTemporaryFile (safe replacement for mktemp)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                tmp_path = tmp.name
+            PILImage.fromarray(gradcam_array.astype(np.uint8)).save(tmp_path)
             story.append(Paragraph("Grad-CAM Heatmap Overlay:", styles["Heading3"]))
-            story.append(RLImage(tmp_cam, width=8 * cm, height=8 * cm))
+            story.append(RLImage(tmp_path, width=8 * cm, height=8 * cm))
+            os.unlink(tmp_path)
         except Exception as exc:
-            story.append(Paragraph(f"[Grad-CAM could not be embedded: {exc}]", styles["Normal"]))
+            story.append(Paragraph(f"[Grad-CAM embed failed: {exc}]", styles["Normal"]))
 
     doc.build(story)
-    logger.info("Discrepancy PDF saved: %s", output_path)
+    log.info("Discrepancy PDF saved: %s", output_path)
+
+
+def _save_metrics_json(metrics: Dict[str, Any], output_dir: Path) -> None:
+    ts  = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out = output_dir / f"validation_metrics_{ts}.json"
+    try:
+        with out.open("w", encoding="utf-8") as fh:
+            json.dump(metrics, fh, indent=2)
+        log.info("Metrics saved to %s", out)
+    except OSError as exc:
+        log.error("Could not save metrics JSON: %s", exc)
 
 
 # ---------------------------------------------------------------------------
-# Main public API
+# Public API
 # ---------------------------------------------------------------------------
-
 def generate_validation_report(
     model: Any,
     validation_csv: str,
     output_dir: str,
     image_base_dir: str = ".",
     max_discrepancies: int = 200,
-) -> Dict[str, float]:
-    """
-    Run full clinical validation: compute agreement metrics and save PDF
-    discrepancy reports for every case where model and radiologist disagree.
+) -> Dict[str, Any]:
+    """Run full clinical validation against radiologist annotations.
+
+    The ``model`` object must expose:
+        ``generate_answer(image, question) → (str, float)``
+        ``generate_gradcam(image) → (np.ndarray, any)``   (optional)
 
     Parameters
     ----------
-    model:
-        Any object with a ``generate_answer(image, question) → (str, float)``
-        method and a ``generate_gradcam(image) → (np.ndarray, any)`` method.
-        Compatible with ``vqa_app_deliverable.model_inference.MedicalVQAModel``.
-    validation_csv:
-        Path to a CSV file with columns: ``image_id``, ``question``,
-        ``radiologist_answer``.
-    output_dir:
-        Directory where discrepancy PDFs will be saved.
-    image_base_dir:
-        Root directory to resolve relative ``image_id`` paths.
-    max_discrepancies:
-        Maximum number of PDF reports to generate (avoid disk explosion).
+    model             : VQA model instance
+    validation_csv    : path to CSV with columns image_id, question, radiologist_answer
+    output_dir        : directory for PDF discrepancy reports
+    image_base_dir    : root directory to resolve image_id paths
+    max_discrepancies : max PDF reports to generate
 
     Returns
     -------
-    Dict with keys:
-        - ``accuracy``          (float, 0–1)
-        - ``cohen_kappa``       (float)
-        - ``n_total``           (int)
-        - ``n_correct``         (int)
-        - ``n_discrepancies``   (int)
+    dict: accuracy, cohen_kappa, n_total, n_correct, n_discrepancies
     """
-    output_dir_path = Path(output_dir)
-    output_dir_path.mkdir(parents=True, exist_ok=True)
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
 
-    # Load annotations
     rows = _load_csv(validation_csv)
     if not rows:
-        logger.error("No rows loaded from %s", validation_csv)
-        return {
-            "accuracy": 0.0, "cohen_kappa": 0.0,
-            "n_total": 0, "n_correct": 0, "n_discrepancies": 0,
-        }
+        log.error("No rows loaded from %s", validation_csv)
+        return {"accuracy": 0.0, "cohen_kappa": 0.0,
+                "n_total": 0, "n_correct": 0, "n_discrepancies": 0}
 
-    predictions:  List[str] = []
-    references:   List[str] = []
-    n_discrepancies = 0
+    predictions: List[str] = []
+    references:  List[str] = []
+    n_disc = 0
 
     for row in rows:
-        image_id         = row.get("image_id", "").strip()
-        question         = row.get("question", "").strip()
-        radiologist_ans  = row.get("radiologist_answer", "").strip()
+        img_id  = row.get("image_id", "").strip()
+        question = row.get("question", "").strip()
+        rad_ans  = row.get("radiologist_answer", "").strip()
 
-        if not image_id or not question or not radiologist_ans:
-            logger.warning("Skipping incomplete row: %s", row)
+        if not (img_id and question and rad_ans):
+            log.warning("Skipping incomplete row: %s", row)
             continue
 
-        # Resolve image path
-        image_path = str(Path(image_base_dir) / image_id)
+        image_path = str(Path(image_base_dir) / img_id)
         image = _load_image(image_path)
         if image is None:
-            logger.warning("Image not found or unreadable: %s", image_path)
-            predictions.append("")
-            references.append(radiologist_ans)
+            predictions.append(""); references.append(rad_ans)
             continue
 
-        # Run inference
         try:
             model_answer, confidence = model.generate_answer(image, question)
         except Exception as exc:
-            logger.error("Inference failed for %s: %s", image_id, exc)
+            log.error("Inference failed for %s: %s", img_id, exc)
             model_answer, confidence = "ERROR", 0.0
 
         predictions.append(model_answer)
-        references.append(radiologist_ans)
+        references.append(rad_ans)
 
-        if not _answers_match(model_answer, radiologist_ans):
-            # Generate discrepancy PDF
-            if n_discrepancies < max_discrepancies:
-                gradcam = None
-                try:
-                    gradcam, _ = model.generate_gradcam(image)
-                except Exception:
-                    pass
+        if not _match(model_answer, rad_ans) and n_disc < max_discrepancies:
+            gradcam = None
+            try:
+                gradcam, _ = model.generate_gradcam(image)
+            except Exception:
+                pass
 
-                safe_id = "".join(c if c.isalnum() else "_" for c in image_id)
-                pdf_path = str(output_dir_path / f"discrepancy_{safe_id}.pdf")
-                _build_pdf_report(
-                    output_path=pdf_path,
-                    image_path=image_path,
-                    question=question,
-                    model_answer=model_answer,
-                    confidence=float(confidence),
-                    radiologist_answer=radiologist_ans,
-                    gradcam_array=gradcam,
-                    sample_id=image_id,
-                )
-            n_discrepancies += 1
+            safe_id  = "".join(c if c.isalnum() else "_" for c in img_id)
+            pdf_path = str(out_path / f"discrepancy_{safe_id}.pdf")
+            _build_pdf(
+                output_path=pdf_path,
+                image_path=image_path,
+                question=question,
+                model_answer=model_answer,
+                confidence=float(confidence),
+                radiologist_answer=rad_ans,
+                gradcam_array=gradcam,
+                sample_id=img_id,
+            )
+            n_disc += 1
 
     if not predictions:
-        return {
-            "accuracy": 0.0, "cohen_kappa": 0.0,
-            "n_total": 0, "n_correct": 0, "n_discrepancies": 0,
-        }
+        return {"accuracy": 0.0, "cohen_kappa": 0.0,
+                "n_total": 0, "n_correct": 0, "n_discrepancies": n_disc}
 
-    n_correct = sum(
-        1 for p, r in zip(predictions, references) if _answers_match(p, r)
-    )
+    n_correct = sum(1 for p, r in zip(predictions, references) if _match(p, r))
     accuracy  = n_correct / len(predictions)
-    kappa     = _compute_kappa(predictions, references)
+    kappa     = _kappa(predictions, references)
 
     metrics = {
         "accuracy":        round(accuracy, 4),
-        "cohen_kappa":     round(kappa, 4),
+        "cohen_kappa":     round(kappa,    4),
         "n_total":         len(predictions),
         "n_correct":       n_correct,
-        "n_discrepancies": n_discrepancies,
+        "n_discrepancies": n_disc,
     }
-
-    logger.info(
-        "Validation complete | accuracy=%.3f | kappa=%.3f | discrepancies=%d/%d",
-        accuracy, kappa, n_discrepancies, len(predictions),
+    log.info(
+        "Validation complete | acc=%.3f | kappa=%.3f | disc=%d/%d",
+        accuracy, kappa, n_disc, len(predictions),
     )
-
-    # Save metrics summary JSON
-    _save_metrics_json(metrics, output_dir_path)
-
+    _save_metrics_json(metrics, out_path)
     return metrics
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _load_csv(csv_path: str) -> List[Dict[str, str]]:
-    """Load the annotation CSV into a list of dicts."""
-    if _PANDAS_AVAILABLE:
-        try:
-            df = pd.read_csv(csv_path)
-            return df.to_dict(orient="records")
-        except Exception as exc:
-            logger.error("pandas failed to read CSV: %s", exc)
-
-    # stdlib fallback
-    rows = []
-    try:
-        with open(csv_path, newline="", encoding="utf-8") as fh:
-            reader = csv.DictReader(fh)
-            rows = list(reader)
-    except OSError as exc:
-        logger.error("Cannot open CSV %s: %s", csv_path, exc)
-    return rows
-
-
-def _load_image(image_path: str) -> Optional["PILImage.Image"]:
-    """Load an image from disk, returning None on failure."""
-    if not _PIL_AVAILABLE:
-        logger.error("PIL not available – cannot load images.")
-        return None
-    try:
-        return PILImage.open(image_path).convert("RGB")
-    except Exception as exc:
-        logger.warning("Failed to open image %s: %s", image_path, exc)
-        return None
-
-
-def _save_metrics_json(metrics: Dict[str, Any], output_dir: Path) -> None:
-    """Save metrics dict as JSON summary file."""
-    import json
-    ts  = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out = output_dir / f"validation_metrics_{ts}.json"
-    try:
-        with out.open("w", encoding="utf-8") as fh:
-            json.dump(metrics, fh, indent=2)
-        logger.info("Metrics saved to %s", out)
-    except OSError as exc:
-        logger.error("Could not save metrics JSON: %s", exc)

@@ -1,107 +1,120 @@
-import torch
-import numpy as np
-from sklearn.metrics import roc_auc_score, f1_score, accuracy_score, confusion_matrix
+"""
+training/metrics.py
+====================
+Clinical metrics tracker for multi-label chest X-ray classification.
+Computes AUC-ROC, F1, Sensitivity, Specificity per class and macro averages.
+"""
+from __future__ import annotations
+
 import time
 
+import numpy as np
+import torch
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    roc_auc_score,
+)
+
+
 class ClinicalMetrics:
+    """Accumulate predictions over an epoch then compute clinical metrics.
+
+    Parameters
+    ----------
+    class_names : list of pathology/class names (length == num_classes)
     """
-    Computes clinical metrics for Multi-Label classification arrays.
-    Tracks AUC-ROC, F1, Sensitivity, Specificity per class and macro/micro averages.
-    """
-    def __init__(self, class_names: list):
+
+    def __init__(self, class_names: list[str]) -> None:
         self.class_names = class_names
         self.num_classes = len(class_names)
         self.reset()
-        
-    def reset(self):
-        self.y_true = []
-        self.y_score = []
-        self.y_pred = []
-        self.inference_times = []
 
-    def update(self, y_true: torch.Tensor, y_score: torch.Tensor, threshold: float = 0.5):
-        """
-        Args:
-            y_true (Tensor): Ground truth binary labels (B, num_classes)
-            y_score (Tensor): Predicted probabilities (B, num_classes)
-            threshold (float): Threshold to binarize scores into predictions.
-        """
-        start_time = time.time()
-        
-        # Move completely to CPU numpy
-        self.y_true.append(y_true.detach().cpu().numpy())
-        self.y_score.append(y_score.detach().cpu().numpy())
-        
-        y_p = (y_score.detach().cpu().numpy() >= threshold).astype(int)
-        self.y_pred.append(y_p)
-        
-        self.inference_times.append(time.time() - start_time)
+    def reset(self) -> None:
+        self._y_true: list[np.ndarray] = []
+        self._y_score: list[np.ndarray] = []
+        self._y_pred: list[np.ndarray] = []
+        self._times: list[float] = []
 
-    def compute(self) -> dict:
-        """
-        Computes the final dictionary of clinical metrics.
-        """
-        y_t = np.vstack(self.y_true)
-        y_s = np.vstack(self.y_score)
-        y_p = np.vstack(self.y_pred)
+    def update(
+        self,
+        y_true: torch.Tensor,
+        y_score: torch.Tensor,
+        threshold: float = 0.5,
+    ) -> None:
+        """Accumulate one batch of predictions.
 
-        results = {}
-        
-        # 1. AUC-ROC
-        # We calculate per-class AUC, then macro/micro
-        aucs = []
-        for i, class_name in enumerate(self.class_names):
+        Parameters
+        ----------
+        y_true  : (B, num_classes) binary ground-truth tensor
+        y_score : (B, num_classes) predicted-probability tensor
+        threshold : binarisation threshold for binary predictions
+        """
+        t0 = time.perf_counter()
+        yt = y_true.detach().cpu().numpy()
+        ys = y_score.detach().cpu().numpy()
+        yp = (ys >= threshold).astype(int)
+        self._y_true.append(yt)
+        self._y_score.append(ys)
+        self._y_pred.append(yp)
+        self._times.append(time.perf_counter() - t0)
+
+    def compute(self) -> dict[str, float]:
+        """Compute and return all clinical metrics as a flat dict."""
+        y_t = np.vstack(self._y_true)
+        y_s = np.vstack(self._y_score)
+        y_p = np.vstack(self._y_pred)
+        results: dict[str, float] = {}
+
+        # AUC-ROC per class + macro / micro
+        aucs: list[float] = []
+        for i, name in enumerate(self.class_names):
             try:
                 auc = roc_auc_score(y_t[:, i], y_s[:, i])
+                results[f"auc_{name}"] = auc
                 aucs.append(auc)
-                results[f'auc_{class_name}'] = auc
             except ValueError:
-                # Occurs if a class only has 1 label in the batch/split
-                aucs.append(np.nan)
-                
-        results['auc_macro'] = np.nanmean(aucs)
+                aucs.append(float("nan"))
+        results["auc_macro"] = float(np.nanmean(aucs))
         try:
-            results['auc_micro'] = roc_auc_score(y_t, y_s, average='micro')
+            results["auc_micro"] = float(roc_auc_score(y_t, y_s, average="micro"))
         except ValueError:
-            results['auc_micro'] = np.nan
+            results["auc_micro"] = float("nan")
 
-        # 2. F1 Scores
-        results['f1_macro'] = f1_score(y_t, y_p, average='macro', zero_division=0)
-        results['f1_micro'] = f1_score(y_t, y_p, average='micro', zero_division=0)
-        
-        # 3. Sensitivity / Specificity per class
-        sensitivities = []
-        specificities = []
-        for i, class_name in enumerate(self.class_names):
-            tn, fp, fn, tp = confusion_matrix(y_t[:, i], y_p[:, i], labels=[0, 1]).ravel()
+        # F1
+        results["f1_macro"] = float(f1_score(y_t, y_p, average="macro",  zero_division=0))
+        results["f1_micro"] = float(f1_score(y_t, y_p, average="micro",  zero_division=0))
+
+        # Sensitivity / Specificity per class + macro averages
+        sens_list, spec_list = [], []
+        for i, name in enumerate(self.class_names):
+            cm = confusion_matrix(y_t[:, i], y_p[:, i], labels=[0, 1])
+            tn, fp, fn, tp = cm.ravel()
             sens = tp / (tp + fn) if (tp + fn) > 0 else 0.0
             spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-            
-            sensitivities.append(sens)
-            specificities.append(spec)
-            
-            results[f'sens_{class_name}'] = sens
-            results[f'spec_{class_name}'] = spec
-            
-        results['sens_macro'] = np.mean(sensitivities)
-        results['spec_macro'] = np.mean(specificities)
-        
-        # 4. Exact Match Ratio (Strict Accuracy)
-        results['accuracy_exact'] = accuracy_score(y_t, y_p)
+            results[f"sens_{name}"] = float(sens)
+            results[f"spec_{name}"] = float(spec)
+            sens_list.append(sens)
+            spec_list.append(spec)
+        results["sens_macro"] = float(np.mean(sens_list))
+        results["spec_macro"] = float(np.mean(spec_list))
 
-        # 5. Timing
-        results['avg_inference_time_ms'] = np.mean(self.inference_times) * 1000
+        # Exact match accuracy
+        results["accuracy_exact"] = float(accuracy_score(y_t, y_p))
+
+        # Inference timing (average per update call, in ms)
+        results["avg_inference_time_ms"] = float(np.mean(self._times) * 1000)
 
         return results
 
+
 if __name__ == "__main__":
-    # Test script
-    metrics = ClinicalMetrics(class_names=["Atelectasis", "Cardiomegaly"])
-    y_true = torch.tensor([[1, 0], [0, 1], [1, 1], [0, 0]])
+    metrics = ClinicalMetrics(["Atelectasis", "Cardiomegaly"])
+    y_true  = torch.tensor([[1, 0], [0, 1], [1, 1], [0, 0]])
     y_score = torch.tensor([[0.9, 0.1], [0.2, 0.8], [0.8, 0.9], [0.1, 0.2]])
     metrics.update(y_true, y_score)
     res = metrics.compute()
-    print("Test Metrics Computed:")
     for k, v in res.items():
-        if "auc" in k or "macro" in k:
+        if any(t in k for t in ("auc", "macro")):
             print(f"{k}: {v:.4f}")

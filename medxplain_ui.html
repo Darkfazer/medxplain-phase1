@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MedXplain – Medical AI Assistant</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',system-ui,sans-serif;background:#fff;color:#333;height:100vh;overflow:hidden}
+/* ── Layout ── */
+.app{display:flex;height:100vh;overflow:hidden}
+/* ── Sidebar ── */
+.sidebar{width:200px;min-width:200px;background:#F5F5F5;border-right:1px solid #E0E0E0;display:flex;flex-direction:column;padding:16px 12px;gap:4px;overflow-y:auto}
+.sb-logo{display:flex;align-items:center;gap:8px;padding:8px 4px 12px;font-weight:700;font-size:1rem;color:#1B8B8B;border-bottom:1px solid #E0E0E0;margin-bottom:8px}
+.sb-logo svg{flex-shrink:0}
+.btn-new{display:flex;align-items:center;justify-content:center;gap:6px;background:#1B8B8B;color:#fff;border:none;border-radius:8px;padding:9px 12px;font-size:.85rem;font-weight:600;cursor:pointer;width:100%;margin-bottom:12px;transition:background .15s}
+.btn-new:hover{background:#167474}
+.hist-label{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#9ca3af;padding:4px 4px 6px}
+.hist-item{padding:8px;border-radius:7px;cursor:pointer;transition:background .12s}
+.hist-item:hover{background:#EBEBEB}
+.hist-title{font-size:.8rem;font-weight:500;color:#374151;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hist-date{font-size:.7rem;color:#9ca3af;margin-top:2px}
+.hist-empty{font-size:.8rem;color:#9ca3af;font-style:italic;padding:4px}
+.sb-spacer{flex:1}
+.sb-user{display:flex;align-items:center;gap:8px;padding:10px 4px 4px;border-top:1px solid #E0E0E0}
+.sb-avatar{width:30px;height:30px;border-radius:50%;background:#1B8B8B;color:#fff;display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;flex-shrink:0}
+.sb-username{font-size:.8rem;font-weight:500;color:#374151;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ── Main column ── */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+/* ── Navbar ── */
+.navbar{display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:52px;background:#fff;border-bottom:1px solid #E5E7EB;flex-shrink:0}
+.nav-left{display:flex;align-items:center;gap:8px}
+.nav-select{border:1px solid #E5E7EB;border-radius:7px;padding:5px 10px;font-size:.8rem;color:#374151;background:#fff;cursor:pointer;outline:none;font-family:inherit}
+.nav-right{display:flex;align-items:center;gap:14px}
+.nav-link{font-size:.78rem;color:#1B8B8B;text-decoration:none;cursor:pointer;font-weight:500}
+.nav-link:hover{text-decoration:underline}
+.lang-btn{border:1px solid #E5E7EB;border-radius:7px;padding:4px 10px;font-size:.78rem;background:#fff;cursor:pointer;color:#374151;font-family:inherit}
+/* ── Content ── */
+.content{flex:1;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:0 20px 20px}
+.content-inner{width:100%;max-width:640px;display:flex;flex-direction:column;align-items:center;padding-top:36px}
+/* logo icon */
+.med-logo{display:flex;align-items:center;justify-content:center;gap:-4px;margin-bottom:16px}
+/* greeting */
+.greeting{font-size:1.2rem;font-weight:500;color:#374151;text-align:center;margin-bottom:24px;line-height:1.5}
+/* upload box */
+.upload-box{width:100%;max-width:600px;border:2px dashed #CCCCCC;border-radius:12px;background:#FAFAFA;padding:28px 24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;position:relative;margin-bottom:16px}
+.upload-box:hover,.upload-box.drag{border-color:#1B8B8B;background:#F0FAFA}
+.upload-icon{display:flex;justify-content:center;margin-bottom:10px;color:#9ca3af}
+.upload-click{font-size:.95rem;font-weight:700;color:#1B8B8B;margin-bottom:6px}
+.upload-desc{font-size:.8rem;color:#6b7280;line-height:1.5;margin-bottom:8px}
+.upload-note{font-size:.73rem;color:#9ca3af}
+.upload-cam{position:absolute;right:14px;bottom:14px;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:6px;cursor:pointer;display:flex;align-items:center;color:#6b7280;transition:color .15s,border-color .15s}
+.upload-cam:hover{color:#1B8B8B;border-color:#1B8B8B}
+.preview-wrap{width:100%;max-width:600px;margin-bottom:14px;border-radius:10px;overflow:hidden;border:1px solid #E5E7EB;position:relative}
+.preview-wrap img{width:100%;display:block;max-height:240px;object-fit:contain;background:#000}
+.preview-remove{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.5);color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:.75rem;cursor:pointer}
+/* mode toggles */
+.mode-row{display:flex;gap:8px;margin-bottom:14px}
+.mode-btn{padding:7px 22px;border-radius:999px;font-size:.85rem;font-weight:500;border:1.5px solid #DDDDDD;cursor:pointer;transition:all .15s;font-family:inherit}
+.mode-btn.active{background:#1B8B8B;color:#fff;border-color:#1B8B8B}
+.mode-btn:not(.active){background:#fff;color:#374151}
+.mode-btn:not(.active):hover{border-color:#1B8B8B;color:#1B8B8B}
+/* chat bubbles */
+.chat-area{width:100%;max-width:600px;margin-bottom:14px;display:flex;flex-direction:column;gap:10px}
+.bubble-user{align-self:flex-end;background:#1B8B8B;color:#fff;border-radius:12px 12px 3px 12px;padding:10px 14px;font-size:.88rem;max-width:80%}
+.bubble-bot{align-self:flex-start;background:#fff;border:1px solid #E5E7EB;border-radius:12px 12px 12px 3px;padding:12px 16px;font-size:.88rem;max-width:92%;line-height:1.65;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.bubble-bot h4{font-size:.9rem;font-weight:700;margin-bottom:8px;color:#1B8B8B}
+.bubble-bot table{width:100%;border-collapse:collapse;margin-bottom:8px}
+.bubble-bot td{padding:4px 8px;font-size:.82rem;border-bottom:1px solid #F3F4F6}
+.bubble-bot td:first-child{color:#6b7280;width:130px}
+.bubble-bot td:last-child{font-weight:500}
+.bubble-bot .vqa-section{margin-top:10px;padding-top:10px;border-top:1px solid #F3F4F6}
+/* input bar */
+.input-wrap{width:100%;max-width:640px;position:sticky;bottom:0;background:#fff;padding:12px 0 0}
+.input-bar{display:flex;align-items:center;gap:8px;border:1.5px solid #E5E7EB;border-radius:12px;padding:10px 14px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.06);transition:border-color .15s}
+.input-bar:focus-within{border-color:#1B8B8B;box-shadow:0 0 0 3px rgba(27,139,139,.1)}
+.input-bar svg{flex-shrink:0;color:#9ca3af}
+.input-bar input{flex:1;border:none;outline:none;font-family:inherit;font-size:.88rem;color:#111827;background:transparent}
+.input-bar input::placeholder{color:#9ca3af}
+.send-btn{background:#1B8B8B;color:#fff;border:none;border-radius:8px;padding:7px 12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;flex-shrink:0}
+.send-btn:hover{background:#167474}
+.send-btn:disabled{background:#9ca3af;cursor:not-allowed}
+.hint-text{font-size:.71rem;color:#9ca3af;text-align:center;margin-top:6px}
+/* ── fixed bottom footer ── */
+.footer-bar{position:fixed;bottom:0;left:0;right:0;z-index:50;background:#fff;border-top:1px solid #F3F4F6;padding:7px 24px;text-align:center;font-size:.72rem;color:#CBD5E1;line-height:1.5;pointer-events:none}
+/* ── right features panel ── */
+.feat-toggle{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:60;background:#1B8B8B;color:#fff;border:none;border-radius:8px 0 0 8px;padding:10px 6px;cursor:pointer;writing-mode:vertical-rl;font-size:.72rem;font-weight:600;letter-spacing:.06em;display:flex;align-items:center;gap:6px;transition:background .15s}
+.feat-toggle:hover{background:#167474}
+.feat-badge{background:#e74c3c;color:#fff;border-radius:999px;font-size:.65rem;font-weight:700;padding:1px 5px;writing-mode:horizontal-tb;margin-bottom:4px}
+.feat-panel{position:fixed;right:0;top:0;bottom:0;width:270px;background:#fff;border-left:1px solid #E5E7EB;z-index:55;display:flex;flex-direction:column;padding:16px 14px 80px;box-shadow:-4px 0 16px rgba(0,0,0,.08);transform:translateX(100%);transition:transform .25s ease;overflow-y:auto}
+.feat-panel.open{transform:translateX(0)}
+.feat-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.feat-panel-title{font-size:.95rem;font-weight:700;color:#111827}
+.feat-close{background:none;border:none;cursor:pointer;color:#6b7280;font-size:1.1rem;line-height:1;padding:2px 6px;border-radius:6px;transition:background .12s}
+.feat-close:hover{background:#F3F4F6}
+.feat-item{border:1.5px solid #E5E7EB;border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:all .15s;background:#fff}
+.feat-item.on{border-color:#1B8B8B;background:#F0FAFA}
+.feat-item-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.feat-name{font-size:.83rem;font-weight:600;color:#111827}
+.feat-check{font-size:.75rem;background:#1B8B8B;color:#fff;border-radius:999px;padding:1px 7px;font-weight:600}
+.feat-desc{font-size:.75rem;color:#6b7280;line-height:1.45}
+.feat-reset{margin-top:4px;width:100%;background:#fff;border:1.5px solid #E5E7EB;border-radius:8px;padding:8px;font-size:.82rem;font-weight:600;color:#6b7280;cursor:pointer;transition:all .15s;font-family:inherit}
+.feat-reset:hover{border-color:#e74c3c;color:#e74c3c}
+/* cam overlay */
+.cam-wrap{width:100%;max-width:600px;margin-bottom:12px}
+.cam-wrap img{width:100%;border-radius:10px;border:1px solid #E5E7EB}
+.cam-label{font-size:.75rem;color:#6b7280;text-align:center;margin-bottom:4px;font-weight:500}
+/* loading dots */
+.loading{display:flex;gap:5px;align-items:center;padding:8px 0}
+.dot{width:7px;height:7px;border-radius:50%;background:#1B8B8B;animation:bounce .9s infinite}
+.dot:nth-child(2){animation-delay:.2s}
+.dot:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
+@media(max-width:640px){.sidebar{display:none}.navbar{padding:0 12px}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useCallback } = React;
+
+/* ── Advanced Features definition ── */
+const FEATURES = [
+  { id:'report',  name:'Report-Aware Answering',   desc:'Correlates past reports with current imaging contexts.' },
+  { id:'context', name:'Context-Aware Answering',  desc:'Ingests vitals and labs into the NLP pipeline.' },
+  { id:'longit',  name:'Longitudinal View',         desc:'Fuses consecutive time-point images to isolate differences.' },
+  { id:'report1', name:'One-Click Reporting',       desc:'Automatically generates finding/impression structured reports.' },
+  { id:'diff',    name:'Differential Diagnosis',    desc:'Summarizes and ranks the top 3 underlying etiologies.' },
+];
+
+/* ── Mock data ── */
+const MOCK_HISTORY = [
+  { id:1, title:"Complete right hemithorax...", date:"4/20/2026", mode:"Doctor Assistant" },
+  { id:2, title:"Chest X-ray – Pneumonia", date:"4/18/2026", mode:"Standard" },
+  { id:3, title:"CT scan – Normal", date:"4/15/2026", mode:"Standard" },
+];
+const MODELS = [
+  "Ensemble (Classification + VQA)",
+  "TorchXRayVision (Classification only)",
+  "BLIP-VQA (Visual Q&A only)",
+];
+const DETECT = ["Auto Detect","Chest X-ray","CT/MRI","Ultrasound","Pathology","Skin Photo"];
+const RISK_ICON = { Low:"🟢", Medium:"🟡", High:"🔴" };
+
+/* ── SVG Icons ── */
+const Icon = ({ d, size=20, ...p }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+       strokeLinejoin="round" {...p}>
+    <path d={d}/>
+  </svg>
+);
+const PlusIcon    = () => <Icon d="M12 5v14M5 12h14"/>;
+const UploadIcon  = () => <Icon d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" size={32}/>;
+const SendIcon    = () => <Icon d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>;
+const BulbIcon    = () => <Icon d="M9 18h6M10 22h4M12 2a7 7 0 017 7c0 2.9-1.7 5.4-4 6.7V17H9v-1.3C6.7 14.4 5 11.9 5 9a7 7 0 017-7z" size={18}/>;
+const CamIcon     = () => <Icon d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2zM12 17a4 4 0 100-8 4 4 0 000 8z" size={18}/>;
+const CloseIcon   = () => <Icon d="M18 6L6 18M6 6l12 12" size={14}/>;
+const CrossIcon   = () => (
+  <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+    <rect x="14" y="4" width="8" height="28" rx="3" fill="#1B8B8B"/>
+    <rect x="4" y="14" width="28" height="8" rx="3" fill="#1B8B8B"/>
+    <rect x="22" y="18" width="12" height="10" rx="5" fill="#22c55e"/>
+    <text x="23" y="27" fontSize="9" fill="white" fontWeight="bold">💬</text>
+  </svg>
+);
+
+const RISK_ICON_MAP = { Low:"🟢", Medium:"🟡", High:"🔴" };
+// API base URL – override via window.__API_URL before the script loads
+const API = (window.__API_URL || "http://localhost:8000").replace(/\/$/, "");
+
+/* ── BotBubble (real API result) ── */
+function BotBubble({ result, question, mode, activeFeats }) {
+  const featNames = (activeFeats||[]).map(id => FEATURES.find(f=>f.id===id)?.name).filter(Boolean);
+  const { label, confidence, ci, risk, vqa_answer, vqa_conf,
+          gradcam_b64, differential, longitudinal, report } = result;
+  return (
+    <div className="bubble-bot">
+      <h4>🩻 MedXplain Analysis</h4>
+      {label && (
+        <table><tbody>
+          <tr><td>Prediction</td><td><b>{label}</b></td></tr>
+          <tr><td>Confidence</td><td><b>{(confidence*100).toFixed(1)}%</b></td></tr>
+          {ci && <tr><td>90% CI</td><td>[{ci[0].toFixed(2)} – {ci[1].toFixed(2)}]</td></tr>}
+          <tr><td>Risk Level</td><td>{RISK_ICON_MAP[risk]||'⚪'} <b>{risk}</b></td></tr>
+          <tr><td>Mode</td><td>{mode}</td></tr>
+        </tbody></table>
+      )}
+      {vqa_answer && (
+        <div className="vqa-section">
+          <div style={{fontSize:'.8rem',color:'#6b7280',marginBottom:4}}>
+            <b>Clinical Question:</b> <i>{question}</i>
+          </div>
+          <div style={{fontSize:'.88rem'}}>{vqa_answer}</div>
+          <div style={{fontSize:'.75rem',color:'#9ca3af',marginTop:4}}>
+            VQA confidence: {(vqa_conf*100).toFixed(1)}%
+          </div>
+        </div>
+      )}
+      {gradcam_b64 && (
+        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid #F3F4F6'}}>
+          <div style={{fontSize:'.78rem',fontWeight:600,color:'#1B8B8B',marginBottom:6}}>🔥 Grad-CAM Explainability</div>
+          <img src={gradcam_b64} alt="Grad-CAM" style={{width:'100%',borderRadius:8,border:'1px solid #E5E7EB'}}/>
+        </div>
+      )}
+      {differential && differential.length > 0 && (
+        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid #F3F4F6'}}>
+          <div style={{fontSize:'.78rem',fontWeight:600,color:'#1B8B8B',marginBottom:6}}>🔬 Differential Diagnosis</div>
+          {differential.map((d,i) => (
+            <div key={i} style={{fontSize:'.82rem',color:'#374151',padding:'2px 0',display:'flex',justifyContent:'space-between'}}>
+              <span>{i+1}. {d.label}</span>
+              <b style={{color:'#1B8B8B'}}>{(d.prob*100).toFixed(1)}%</b>
+            </div>
+          ))}
+        </div>
+      )}
+      {longitudinal && (
+        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid #F3F4F6',fontSize:'.82rem',color:'#374151'}}>
+          📅 <b>Longitudinal:</b> {longitudinal}
+        </div>
+      )}
+      {report && (
+        <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid #F3F4F6'}}>
+          <div style={{fontSize:'.78rem',fontWeight:600,color:'#1B8B8B',marginBottom:4}}>📄 Clinical Report</div>
+          <pre style={{fontSize:'.72rem',color:'#374151',whiteSpace:'pre-wrap',background:'#F9FAFB',borderRadius:6,padding:8,border:'1px solid #E5E7EB'}}>{report}</pre>
+          <a href={`data:text/plain;charset=utf-8,${encodeURIComponent(report)}`}
+             download="medxplain_report.txt"
+             style={{display:'inline-block',marginTop:6,fontSize:'.75rem',color:'#2563eb',textDecoration:'none',fontWeight:500}}>
+            ⬇ Download Report (.txt)
+          </a>
+        </div>
+      )}
+      {featNames.length > 0 && (
+        <div style={{marginTop:10,padding:'8px 0 0',borderTop:'1px solid #F3F4F6'}}>
+          <div style={{fontSize:'.75rem',fontWeight:600,color:'#1B8B8B',marginBottom:4}}>⚙️ Active Advanced Features</div>
+          {featNames.map(n => (
+            <div key={n} style={{fontSize:'.78rem',color:'#374151',padding:'3px 0',display:'flex',alignItems:'center',gap:6}}>
+              <span style={{color:'#1B8B8B'}}>✓</span> {n}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{marginTop:10,fontSize:'.72rem',color:'#9ca3af',borderTop:'1px solid #F3F4F6',paddingTop:8}}>
+        🛡️ PHI auto-redaction active · 🏥 Production Mode · v1.0.0
+      </div>
+    </div>
+  );
+}
+
+/* ── App ── */
+function App() {
+  const [image, setImage]         = useState(null);
+  const [imageURL, setImageURL]   = useState(null);
+  const [mode, setMode]           = useState("Standard");
+  const [question, setQuestion]   = useState("");
+  const [chat, setChat]           = useState([]);
+  const [history, setHistory]     = useState(MOCK_HISTORY);
+  const [loading, setLoading]     = useState(false);
+  const [drag, setDrag]           = useState(false);
+  const [model, setModel]         = useState(MODELS[0]);
+  const [detect, setDetect]       = useState(DETECT[0]);
+  const [featOpen, setFeatOpen]   = useState(false);
+  const [activeFeats, setActiveFeats] = useState([]);  // array of feature ids
+  const fileRef   = useRef();
+  const bottomRef = useRef();
+
+  const toggleFeat = (id) => setActiveFeats(prev =>
+    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+  );
+  const resetFeats = () => setActiveFeats([]);
+
+  const loadFile = useCallback((file) => {
+    // Accept standard image types AND DICOM (.dcm has type "" or "application/dicom")
+    const isDicom = file?.name?.toLowerCase().endsWith(".dcm");
+    if (!file || (!file.type.startsWith("image/") && !isDicom)) return;
+    setImage(file);
+    setImageURL(URL.createObjectURL(file));
+    setChat([]);
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault(); setDrag(false);
+    const file = e.dataTransfer.files[0];
+    loadFile(file);
+  }, [loadFile]);
+
+  const handleSend = useCallback(async () => {
+    if (!image) { alert("Please upload a medical image first."); return; }
+    const q = question.trim();
+    setChat(prev => [...(q ? [...prev, {type:"user",text:q}] : prev), {type:"loading"}]);
+    setQuestion("");
+    setLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append("image", image);
+      fd.append("question",     q);
+      fd.append("mode",         mode);
+      fd.append("model_choice", model);
+      fd.append("patient_id",  "default");
+      fd.append("feat_report",  String(activeFeats.includes("report")));
+      fd.append("feat_context", String(activeFeats.includes("context")));
+      fd.append("feat_longit",  String(activeFeats.includes("longit")));
+      fd.append("feat_oneclik", String(activeFeats.includes("report1")));
+      fd.append("feat_diff",    String(activeFeats.includes("diff")));
+      const res = await fetch(`${API}/api/analyze`, {method:"POST", body:fd});
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const result = await res.json();
+      const title = result.label || "VQA Query";
+      setHistory(h => [{id:Date.now(), title, date:new Date().toLocaleDateString("en-US"), mode}, ...h.slice(0,9)]);
+      setChat(prev => [
+        ...prev.filter(c => c.type !== "loading"),
+        { type:"bot", result, question:q, mode, activeFeats:[...activeFeats] }
+      ]);
+    } catch(err) {
+      setChat(prev => [
+        ...prev.filter(c => c.type !== "loading"),
+        { type:"error", text: `❌ ${err.message}` }
+      ]);
+    } finally {
+      setLoading(false);
+      setTimeout(() => bottomRef.current?.scrollIntoView({behavior:"smooth"}), 80);
+    }
+  }, [image, question, chat, mode, model, activeFeats]);
+
+  const handleNew = () => {
+    setImage(null);
+    setImageURL(null);
+    setChat([]);
+    setQuestion("");
+  };
+
+  return (
+    <div className="app">
+      {/* ─── SIDEBAR ─── */}
+      <aside className="sidebar">
+        <div className="sb-logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <rect x="9" y="2" width="6" height="20" rx="2" fill="#1B8B8B"/>
+            <rect x="2" y="9" width="20" height="6" rx="2" fill="#1B8B8B"/>
+          </svg>
+          MedXplain
+        </div>
+        <button className="btn-new" onClick={handleNew}>
+          <PlusIcon/> New Report
+        </button>
+        <div className="hist-label">History</div>
+        {history.length === 0
+          ? <div className="hist-empty">No previous sessions yet.</div>
+          : history.map(h => (
+            <div key={h.id} className="hist-item">
+              <div className="hist-title">{h.title}</div>
+              <div className="hist-date">{h.date} · {h.mode}</div>
+            </div>
+          ))
+        }
+        <div className="sb-spacer"/>
+        <div className="sb-user">
+          <div className="sb-avatar">MX</div>
+          <div className="sb-username">Researcher</div>
+        </div>
+      </aside>
+
+      {/* ─── MAIN COLUMN ─── */}
+      <div className="main">
+        {/* Navbar */}
+        <nav className="navbar">
+          <div className="nav-left">
+            <select className="nav-select" value={detect}
+                    onChange={e=>setDetect(e.target.value)}>
+              {DETECT.map(d=><option key={d}>{d}</option>)}
+            </select>
+            <select className="nav-select" value={model}
+                    onChange={e=>setModel(e.target.value)}>
+              {MODELS.map(m=><option key={m}>{m}</option>)}
+            </select>
+          </div>
+          <div className="nav-right">
+            <span className="nav-link">Cite this work · Star on GitHub →</span>
+            <button className="lang-btn">English</button>
+          </div>
+        </nav>
+
+        {/* Scrollable content */}
+        <div className="content">
+          <div className="content-inner">
+
+            {/* Logo */}
+            <div className="med-logo"><CrossIcon/></div>
+
+            {/* Greeting */}
+            <p className="greeting">
+              I am MedXplain, your 24/7 multi-modal medical AI assistant.
+            </p>
+
+            {/* Upload or Preview */}
+            {imageURL ? (
+              <div className="preview-wrap">
+                <img src={imageURL} alt="Uploaded medical image"/>
+                <button className="preview-remove" onClick={handleNew}>
+                  <CloseIcon/> Remove
+                </button>
+              </div>
+            ) : (
+              <div
+                className={`upload-box${drag?" drag":""}`}
+                onClick={()=>fileRef.current.click()}
+                onDragOver={e=>{e.preventDefault();setDrag(true)}}
+                onDragLeave={()=>setDrag(false)}
+                onDrop={handleDrop}
+              >
+                <input ref={fileRef} type="file" accept="image/*,.dcm"
+                       style={{display:"none"}}
+                       onChange={e=>loadFile(e.target.files[0])}/>
+                <div className="upload-icon"><UploadIcon/></div>
+                <div className="upload-click">Click here</div>
+                <p className="upload-desc">
+                  Upload medical images (X-ray, CT, MRI, Ultrasound, Pathology,
+                  Skin photo) or medical reports and get an analysis report instantly.
+                </p>
+                <p className="upload-note">
+                  Supports .jpg, .PNG, .dcm (Max total 50MB)
+                </p>
+                <button className="upload-cam"
+                        onClick={e=>{e.stopPropagation();fileRef.current.click()}}>
+                  <CamIcon/>
+                </button>
+              </div>
+            )}
+
+            {/* Mode toggles */}
+            <div className="mode-row">
+              {["Standard","Doctor Assistant"].map(m=>(
+                <button key={m}
+                  className={`mode-btn${mode===m?" active":""}`}
+                  onClick={()=>setMode(m)}>
+                  {m}
+                </button>
+              ))}
+            </div>
+
+            {/* Chat area */}
+            {chat.length > 0 && (
+              <div className="chat-area">
+                {chat.map((c,i) =>
+                  c.type==="user"    ? <div key={i} className="bubble-user">{c.text}</div>
+                : c.type==="loading" ? <div key={i} className="bubble-bot">
+                                         <div className="loading">
+                                           <div className="dot"/><div className="dot"/><div className="dot"/>
+                                         </div>
+                                       </div>
+                : c.type==="error" ? <div key={i} className="bubble-bot" style={{color:'#e74c3c'}}>{c.text}</div>
+                : <BotBubble key={i} result={c.result} question={c.question} mode={c.mode} activeFeats={c.activeFeats}/>
+                )}
+                <div ref={bottomRef}/>
+              </div>
+            )}
+
+            {/* Input bar */}
+            <div className="input-wrap">
+              <div className="input-bar">
+                <BulbIcon/>
+                <input
+                  value={question}
+                  onChange={e=>setQuestion(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&handleSend()}
+                  placeholder="Providing information (skin part of the image, symptoms, etc.) to improve analysis..."
+                />
+                <button className="send-btn" onClick={handleSend} disabled={loading}>
+                  <SendIcon/>
+                </button>
+              </div>
+              <p className="hint-text">
+                💡 Providing additional info (symptoms, patient history) improves analysis accuracy.
+              </p>
+            </div>
+
+          </div>{/* content-inner */}
+        </div>{/* content */}
+      </div>{/* main */}
+
+      {/* ── RIGHT FEATURES PANEL TAB ── */}
+      <button className="feat-toggle" onClick={()=>setFeatOpen(o=>!o)}
+              title="Advanced Features">
+        {activeFeats.length > 0 && <span className="feat-badge">{activeFeats.length}</span>}
+        ADVANCED
+      </button>
+
+      {/* ── FEATURES PANEL ── */}
+      <div className={`feat-panel${featOpen?' open':''}`}>
+        <div className="feat-panel-head">
+          <span className="feat-panel-title">⚙️ Advanced Features</span>
+          <button className="feat-close" onClick={()=>setFeatOpen(false)}>✕</button>
+        </div>
+        {FEATURES.map(f => (
+          <div key={f.id}
+               className={`feat-item${activeFeats.includes(f.id)?' on':''}`}
+               onClick={()=>toggleFeat(f.id)}>
+            <div className="feat-item-head">
+              <span className="feat-name">{f.name}</span>
+              {activeFeats.includes(f.id) && <span className="feat-check">✓ ON</span>}
+            </div>
+            <div className="feat-desc">{f.desc}</div>
+          </div>
+        ))}
+        <button className="feat-reset" onClick={resetFeats}>↺ Reset All Features</button>
+      </div>
+
+      {/* ── FIXED BOTTOM FOOTER ── */}
+      <div className="footer-bar">
+        ⚠️ MedXplain can make mistakes. Consider checking important information with a qualified clinician.
+        Not for standalone clinical diagnosis. HIPAA &amp; GDPR compliant design.
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
