@@ -1,12 +1,17 @@
 import torch
 import time
 
+
+def _default_device() -> str:
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
 class VQAPredictor:
     """Single image-question prediction with latency monitoring."""
-    def __init__(self, model, device: str = 'cpu'):
+    def __init__(self, model, device: str | None = None):
         self.model = model
-        self.device = device
-        self.model.to(device)
+        self.device = device or _default_device()
+        self.model.to(self.device)
         self.model.eval()
 
     def predict(self, image: torch.Tensor, question: str) -> dict:

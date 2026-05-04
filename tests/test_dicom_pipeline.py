@@ -73,6 +73,7 @@ def _make_greyscale_dataset(rows: int = 64, cols: int = 64,
     ds.PhotometricInterpretation = "MONOCHROME2"
     ds.WindowCenter         = window_center
     ds.WindowWidth          = window_width
+    ds.SliceThickness       = 5.0
 
     ds.PatientID            = "PAT-12345"
     ds.StudyInstanceUID     = "1.2.3.4.5.6.7.8"

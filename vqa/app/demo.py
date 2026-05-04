@@ -142,7 +142,7 @@ def predict_classification(image):
     target_layer = PHASE1_MODEL.model.features[-1] 
     
     try:
-        cam_generator = MedicalGradCAM(model=PHASE1_MODEL, target_layer=target_layer, use_cuda=torch.cuda.is_available())
+        cam_generator = MedicalGradCAM(model=PHASE1_MODEL, target_layer=target_layer)
         mask = cam_generator.generate(input_tensor, target_class=top_index)
         
         numpy_img = np.array(image.resize((224, 224)))
@@ -263,7 +263,7 @@ def generate_counterfactual_demo(image):
     
     target_layer = PHASE1_MODEL.model.features[-1]
     from explainability.grad_cam import MedicalGradCAM
-    cam_generator = MedicalGradCAM(model=PHASE1_MODEL, target_layer=target_layer, use_cuda=torch.cuda.is_available())
+    cam_generator = MedicalGradCAM(model=PHASE1_MODEL, target_layer=target_layer)
     
     from explainability.counterfactual import CounterfactualExplainer
     cf_explainer = CounterfactualExplainer(PHASE1_MODEL, cam_generator, CLASS_NAMES)

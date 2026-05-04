@@ -5,6 +5,10 @@ REM  Run from the medxplain-simple project root.
 REM ─────────────────────────────────────────────────────────────────────────────
 
 echo.
+set MEDXPLAIN_DEVICE=cuda
+set MEDXPLAIN_REQUIRE_CUDA=1
+set CUDA_VISIBLE_DEVICES=0
+
 echo [MedXplain] Starting FastAPI backend on http://localhost:8000 ...
 start "MedXplain API" cmd /k "python backend_api.py"
 

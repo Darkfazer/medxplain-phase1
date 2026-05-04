@@ -21,11 +21,16 @@ import cv2
 import json
 import logging
 import math
+import os
 import time
 import datetime
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+# Keep CUDA 12.4 BLIP inference on the stable SGEMM path on Windows.
+os.environ.setdefault("CUBLASLT_DISABLE_TENSOR_CORE", "1")
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import numpy as np
 from PIL import Image
@@ -39,7 +44,38 @@ log = logging.getLogger("MedXplain.backend")
 #  Paths (no side-effects at import time)
 # ─────────────────────────────────────────────────────────────────────────────
 DB_DIR = Path("medxplain_db")
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _select_device() -> str:
+    requested = os.environ.get("MEDXPLAIN_DEVICE", "cuda").strip().lower()
+    require_cuda = os.environ.get("MEDXPLAIN_REQUIRE_CUDA", "1").strip().lower()
+    require_cuda = require_cuda in {"1", "true", "yes", "on"}
+
+    if requested in {"cuda", "gpu"}:
+        if torch.cuda.is_available():
+            return "cuda"
+        if require_cuda:
+            raise RuntimeError(
+                "MEDXPLAIN_REQUIRE_CUDA=1 but PyTorch cannot see a CUDA GPU. "
+                "Install a CUDA-enabled torch build and NVIDIA drivers, or set "
+                "MEDXPLAIN_REQUIRE_CUDA=0 to allow CPU fallback."
+            )
+        return "cpu"
+
+    if requested == "cpu":
+        if require_cuda:
+            raise RuntimeError(
+                "MEDXPLAIN_DEVICE=cpu conflicts with MEDXPLAIN_REQUIRE_CUDA=1."
+            )
+        return "cpu"
+
+    raise ValueError(
+        "MEDXPLAIN_DEVICE must be 'cuda'/'gpu' or 'cpu', "
+        f"got {requested!r}."
+    )
+
+
+DEVICE = _select_device()
 
 log.info("Backend device: %s", DEVICE)
 
@@ -250,17 +286,14 @@ def generate_gradcam(img_arr: np.ndarray,
             probs = torch.sigmoid(model(tensor)).squeeze().cpu().numpy()
         target_class_idx = int(np.argmax(probs))
 
-    # pytorch-grad-cam expects (1, C, H, W) float32 in [0, 1]
-    # TorchXRayVision uses (1, 1, 224, 224) grayscale
+    # TorchXRayVision DenseNet expects (1, 1, 224, 224) grayscale.
     tensor_for_cam = _preprocess_txrv(img_arr)      # (1, 1, 224, 224)
-    # Expand to 3-channel so show_cam_on_image works cleanly
-    tensor_rgb = tensor_for_cam.repeat(1, 3, 1, 1).to(DEVICE)
 
     targets = [ClassifierOutputTarget(target_class_idx)]
 
     # GradCAM does NOT take use_cuda; device is determined by model/tensor placement
     cam = GradCAM(model=model, target_layers=[target_layer])
-    grayscale_cam = cam(input_tensor=tensor_rgb, targets=targets)[0]  # (H, W)
+    grayscale_cam = cam(input_tensor=tensor_for_cam, targets=targets)[0]  # (H, W)
 
     # Build RGB overlay on original image
     h, w = img_arr.shape[:2]

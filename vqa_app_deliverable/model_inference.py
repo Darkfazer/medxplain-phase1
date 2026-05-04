@@ -102,11 +102,10 @@ class MedicalVQAModel:
         # Identify the target layer for Grad-CAM
         if self.use_mock:
             target_layers = [self.vision_encoder.backbone.layer4[-1]]
-            cam = GradCAM(model=self.vision_encoder, target_layers=target_layers, use_cuda=(self.device.type=='cuda'))
         else:
             # TODO: Assign target layers for your specific vision encoder
             target_layers = [] # e.g. [self.vision_encoder.features[-1]]
-            cam = GradCAM(model=self.vision_encoder, target_layers=target_layers, use_cuda=(self.device.type=='cuda'))
+        cam = GradCAM(model=self.vision_encoder, target_layers=target_layers)
 
         # Generate Mask
         grayscale_cam = cam(input_tensor=img_tensor, targets=None) # Automatically finds highest scoring class if targets=None

@@ -1,9 +1,19 @@
 import os
+
+os.environ.setdefault("CUBLASLT_DISABLE_TENSOR_CORE", "1")
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
 import torch
 
 class Config:
     # Basic settings
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    _requested_device = os.getenv("MEDXPLAIN_DEVICE", "cuda").strip().lower()
+    if _requested_device in {"cuda", "gpu"} and torch.cuda.is_available():
+        DEVICE = torch.device("cuda")
+    elif os.getenv("MEDXPLAIN_REQUIRE_CUDA", "1").strip().lower() in {"1", "true", "yes", "on"}:
+        raise RuntimeError("CUDA GPU is required but PyTorch cannot see one.")
+    else:
+        DEVICE = torch.device("cpu")
     USE_MOCK_MODEL = True  # Toggle this to False when loading real weights
     
     # Model Paths

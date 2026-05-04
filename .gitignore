@@ -1,6 +1,4 @@
-# Create a proper .gitignore file
-@"
-# Model files (large binary files - DO NOT COMMIT)
+# Model files
 *.pth
 *.pt
 *.h5
@@ -11,39 +9,40 @@
 *.npy
 *.npz
 
-# Log files
+# Logs and experiment outputs
 experiments/logs/
 *.tfevents*
 *.log
 logs/
 
-# Cache files
+# Python/cache files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.so
-*.dll
-.pubmed_cache.json
+.pytest_cache/
+pytest-cache-files-*/
+tmp_pytest/
 *.cache
+.pubmed_cache.json
 
-# Data files (if any)
+# Data files
 *.csv
 *.db
 *.sqlite
 mock_data/
 data/
 *.json
-!vqa_rad_cleaned.json  # Keep this specific JSON if needed
+!vqa_rad_cleaned.json
 
-# Virtual Environment
+# Virtual environments
 venv/
 env/
 .env/
 conda-env/
 myenv/
 
-# IDE
+# IDE/editor files
 .vscode/
 .idea/
 *.swp
@@ -54,10 +53,9 @@ Thumbs.db
 .DS_Store
 Desktop.ini
 
-# Jupyter Notebook checkpoints
+# Jupyter
 .ipynb_checkpoints/
 
 # Temporary files
 *.tmp
 *.temp
-"@ | Out-File -FilePath .gitignore -Encoding utf8

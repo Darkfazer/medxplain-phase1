@@ -211,10 +211,11 @@ class TestScrubDicomStudy:
     """
 
     @pytest.fixture(autouse=True)
-    def patch_audit_log(self, tmp_path, monkeypatch):
+    def patch_audit_log(self, monkeypatch):
         """Write audit log to a temp directory."""
+        from pathlib import Path
         import data_ingestion.phi_scrubber as ps
-        monkeypatch.setattr(ps, "_AUDIT_LOG_PATH", tmp_path / "audit.log")
+        monkeypatch.setattr(ps, "_AUDIT_LOG_PATH", Path("tmp_pytest") / "audit.log")
 
     def test_report_scrubbed(self):
         from data_ingestion.phi_scrubber import scrub_dicom_study

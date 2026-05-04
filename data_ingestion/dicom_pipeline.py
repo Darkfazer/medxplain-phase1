@@ -81,7 +81,7 @@ SAFE_METADATA_TAGS: Dict[str, str] = {
     "StudyDescription":      "(0008,1030)",
     "SeriesDescription":     "(0008,103E)",
     "ImagePositionPatient":  "(0020,0032)",
-    "SliceThickness":        "(0050,0018)",
+    "SliceThickness":        "(0018,0050)",
     "WindowCenter":          "(0028,1050)",
     "WindowWidth":           "(0028,1051)",
     "Rows":                  "(0028,0010)",
