@@ -28,6 +28,8 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+import requests
+
 # Keep CUDA 12.4 BLIP inference on the stable SGEMM path on Windows.
 os.environ.setdefault("CUBLASLT_DISABLE_TENSOR_CORE", "1")
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -252,6 +254,54 @@ def answer_vqa(img_arr: np.ndarray, question: str, context: str = "") -> dict:
             conf = 0.0
 
     return {"answer": answer or "Unable to generate answer.", "confidence": conf}
+
+
+def format_answer_for_mode(
+    answer: str,
+    mode: str = "Standard",
+    cls: Optional[dict] = None,
+    context: str = "",
+) -> str:
+    """Return mode-specific response text while preserving the model answer.
+
+    Standard mode is intentionally short. Doctor Assistant mode expands the
+    answer into a cautious clinical-style paragraph that references the
+    explainability overlay and available context without inventing diagnoses.
+    """
+    normalized = (mode or "standard").strip().lower()
+    base = (answer or "Unable to generate answer.").strip()
+    if normalized not in {"doctor", "doctor assistant", "doctor_assistant"}:
+        return base
+
+    finding = ""
+    confidence = ""
+    if cls:
+        finding = cls.get("label") or ""
+        conf_val = cls.get("confidence")
+        if isinstance(conf_val, (int, float)):
+            confidence = f" with approximately {conf_val:.1%} model confidence"
+
+    context_note = ""
+    if context:
+        context_note = " The supplied report/context and vitals were considered as supporting clinical context."
+
+    if finding:
+        return (
+            f"From a doctor-assistant perspective, the image and Grad-CAM overlay "
+            f"focus attention on regions most relevant to {finding}{confidence}. "
+            f"The direct VQA answer is: {base}. This should be interpreted as an "
+            f"AI-assisted observation rather than a standalone diagnosis; correlate "
+            f"it with the patient's symptoms, examination, prior imaging, and formal "
+            f"radiology review.{context_note}"
+        )
+
+    return (
+        f"From a doctor-assistant perspective, the VQA model answers: {base}. "
+        f"The accompanying Grad-CAM overlay highlights image regions that most "
+        f"influenced the system's visual reasoning. This output should be used as "
+        f"decision support and verified against the clinical picture and radiology "
+        f"interpretation.{context_note}"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -520,3 +570,90 @@ def build_differential(all_probs: dict, top_k: int = 3) -> str:
         bar   = "█" * bar_n + "░" * (16 - bar_n)
         lines.append(f"{i}. **{label}** — {prob:.1%}  `{bar}`")
     return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Doctor Assistant mode – text-only clinical note generation (LLM)
+# ─────────────────────────────────────────────────────────────────────────────
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+
+DOCTOR_NOTE_PROMPT = (
+    "You are a senior clinical assistant helping a physician draft a structured clinical note. "
+    "Using only the information provided below, produce a concise, well-organised clinical note "
+    "with the following sections: HISTORY, SYMPTOMS, EXAM FINDINGS, MEDICATIONS, "
+    "CLINICAL QUESTION, ASSESSMENT, and PLAN. Do NOT invent any facts not present in the input. "
+    "If data for a section is missing, state 'Not provided'. Keep the total output under 300 words.\n\n"
+    "{clinical_text}\n\n"
+    "Structured Clinical Note:"
+)
+
+
+def generate_doctor_note(
+    clinical_question: str = "",
+    vitals: str = "",
+) -> str:
+    """Generate a structured clinical note from clinical question using Gemini LLM.
+
+    Falls back to a basic template if no API key is available.
+    """
+    # Build input text block
+    parts: list[str] = []
+    if clinical_question.strip(): parts.append(f"CLINICAL QUESTION: {clinical_question.strip()}")
+    if vitals.strip():         parts.append(f"VITALS/LABS: {vitals.strip()}")
+
+    if not parts:
+        return "No clinical information provided."
+
+    clinical_text = "\n".join(parts)
+
+    # Fallback template when no API key
+    if not GEMINI_API_KEY:
+        log.warning("Doctor note: GEMINI_API_KEY not set; using template fallback.")
+        lines = [
+            "CLINICAL NOTE",
+            "=" * 44,
+            "",
+        ]
+        for part in parts:
+            lines.append(part)
+            lines.append("")
+        lines.append("ASSESSMENT: Clinical correlation required.")
+        lines.append("PLAN: Further evaluation and imaging as indicated.")
+        lines.append("")
+        lines.append("Note: LLM generation disabled — set GEMINI_API_KEY for AI-assisted drafting.")
+        return "\n".join(lines)
+
+    # Call Gemini API
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    )
+    payload = {
+        "contents": [{
+            "parts": [{"text": DOCTOR_NOTE_PROMPT.format(clinical_text=clinical_text)}]
+        }],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 512,
+        },
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if candidates:
+            text = (
+                candidates[0]
+                .get("content", {})
+                .get("parts", [{}])[0]
+                .get("text", "")
+                .strip()
+            )
+            if text and len(text) > 10:
+                return text
+    except Exception as exc:
+        log.warning("Doctor note LLM generation failed: %s", exc)
+
+    # Final fallback on API failure
+    return "Clinical note generation failed. Please check your LLM API key and network connection.\n\nRaw input:\n" + clinical_text

@@ -1,4 +1,7 @@
-<!DOCTYPE html>
+#!/usr/bin/env python3
+# Script to update medxplain_ui.html with new MedExplain branding and features
+
+html_content = '''<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -197,4 +200,8 @@ body{font-family:Inter,system-ui,-apple-system,sans-serif;background:var(--bg-wh
 })();
 </script>
 </body>
-</html>
+</html>'''
+
+with open('medxplain_ui.html', 'w', encoding='utf-8') as f:
+    f.write(html_content)
+print('medxplain_ui.html updated successfully')

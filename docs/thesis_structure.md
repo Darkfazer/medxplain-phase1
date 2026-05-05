@@ -1,7 +1,7 @@
-# Thesis Structure: MedXplain — Explainable Medical Visual Question Answering
+# Thesis Structure: MedExplain — Explainable Medical Visual Question Answering
 
 > **Template Version:** 1.0  
-> **Project:** MedXplain-Phase1 / Hospital-Ready Infrastructure  
+> **Project:** MedExplain-Phase1 / Hospital-Ready Infrastructure  
 > **Repository:** `medxplain-simple/`
 
 ---

@@ -290,7 +290,7 @@ footer,.built-with{display:none !important;}
 # ─────────────────────────────────────────────────────────────────────────────
 #  Gradio UI
 # ─────────────────────────────────────────────────────────────────────────────
-with gr.Blocks(title="MedXplain – Medical AI", css=CSS) as demo:
+with gr.Blocks(title="MedXplain – Medical AI") as demo:
 
     sess_state = gr.State([])
 
@@ -352,13 +352,12 @@ with gr.Blocks(title="MedXplain – Medical AI", css=CSS) as demo:
                     value="Standard", label="Mode", elem_id="mode-wrap",
                 )
 
-                # Chat (type="messages" is the Gradio 4+ API)
+                # Chat (Gradio 6.0 compatible)
                 chatbot = gr.Chatbot(
                     value=[],
                     height=340,
                     show_label=False,
                     elem_id="chatbox",
-                    type="messages",
                     render_markdown=True,
                     visible=False,
                 )
@@ -437,4 +436,4 @@ with gr.Blocks(title="MedXplain – Medical AI", css=CSS) as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True)
+    demo.launch(css=CSS, server_name="0.0.0.0", server_port=7860, show_error=True)
