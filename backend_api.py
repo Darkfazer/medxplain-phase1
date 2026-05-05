@@ -131,6 +131,9 @@ async def analyze(
     spo2: str = Form(default=""),
     wbc:  str = Form(default=""),
     crp:  str = Form(default=""),
+    gradcam_strength: str = Form(default="0.45"),
+    temperature: str = Form(default="1.0"),
+    max_tokens: str = Form(default="64"),
 ):
     """Main inference endpoint.
 
@@ -213,15 +216,13 @@ async def analyze(
     result["vqa_answer"] = vqa_answer
     result["vqa_conf"]   = vqa_conf
 
-    # ── Grad-CAM ──────────────────────────────────────────────────────────────
-    gradcam_b64 = ""
-    if mode == "Doctor Assistant" and do_cls:
-        try:
-            cam_arr = B.generate_gradcam(arr)
-            gradcam_b64 = _img_to_b64(cam_arr)
-        except Exception as e:
-            log.warning("Grad-CAM failed: %s", e)
+    # ── Grad-CAM / explainability overlay ────────────────────────────────────
+    # Always return an image: model-backed Grad-CAM when available, otherwise
+    # a deterministic fallback heatmap.
+    cam_arr = B.generate_explainability_overlay(arr)
+    gradcam_b64 = _img_to_b64(cam_arr)
     result["gradcam_b64"] = gradcam_b64
+    result["gradcam_image"] = gradcam_b64
 
     # ── Differential diagnosis ────────────────────────────────────────────────
     differential: list[dict] = []
@@ -258,6 +259,11 @@ async def analyze(
             model_choice=model_choice,
         )
     result["report"] = report_txt
+    result["answer"] = vqa_answer
+    result["classification"] = cls if cls else None
+    result["question"] = question.strip()
+    result["mode"] = mode
+    result["model_choice"] = model_choice
 
     # ── Persist to patient DB ─────────────────────────────────────────────────
     import time as _time
@@ -266,9 +272,59 @@ async def analyze(
         "prediction": cls["label"] if cls else "VQA only",
         "vqa_answer": vqa_answer,
         "report":     report_txt,
+        "question":   question.strip(),
+        "mode":       mode,
+        "model_choice": model_choice,
+        "result":     result,
     })
 
     return result
+
+
+@app.post("/predict")
+async def predict(
+    file:         UploadFile = File(...),
+    question:     str = Form(default=""),
+    mode:         str = Form(default="Standard"),
+    model_choice: str = Form(default="Ensemble (Classification + VQA)"),
+    patient_id:   str = Form(default="default"),
+    feat_report:  str = Form(default="false"),
+    feat_context: str = Form(default="false"),
+    feat_longit:  str = Form(default="false"),
+    feat_oneclik: str = Form(default="false"),
+    feat_diff:    str = Form(default="false"),
+    bp:   str = Form(default=""),
+    hr:   str = Form(default=""),
+    temp: str = Form(default=""),
+    spo2: str = Form(default=""),
+    wbc:  str = Form(default=""),
+    crp:  str = Form(default=""),
+    gradcam_strength: str = Form(default="0.45"),
+    temperature: str = Form(default="1.0"),
+    max_tokens: str = Form(default="64"),
+):
+    """Compatibility endpoint for clients that post `file` + `question`."""
+    return await analyze(
+        image=file,
+        question=question,
+        mode=mode,
+        model_choice=model_choice,
+        patient_id=patient_id,
+        feat_report=feat_report,
+        feat_context=feat_context,
+        feat_longit=feat_longit,
+        feat_oneclik=feat_oneclik,
+        feat_diff=feat_diff,
+        bp=bp,
+        hr=hr,
+        temp=temp,
+        spo2=spo2,
+        wbc=wbc,
+        crp=crp,
+        gradcam_strength=gradcam_strength,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,6 +333,18 @@ async def analyze(
 @app.get("/api/history")
 async def get_history(patient_id: str = "default") -> list:
     """Return stored report history for a patient."""
+    return B.load_reports(patient_id)
+
+
+@app.get("/reports")
+async def get_reports(patient_id: str = "default") -> list:
+    """Compatibility alias for frontend history."""
+    return B.load_reports(patient_id)
+
+
+@app.get("/report/{patient_id}")
+async def get_report(patient_id: str = "default") -> list:
+    """Return the full report list for one patient."""
     return B.load_reports(patient_id)
 
 

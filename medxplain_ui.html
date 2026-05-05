@@ -92,8 +92,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#fff;color:#333;height:
 .feat-toggle{position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:60;background:#1B8B8B;color:#fff;border:none;border-radius:8px 0 0 8px;padding:10px 6px;cursor:pointer;writing-mode:vertical-rl;font-size:.72rem;font-weight:600;letter-spacing:.06em;display:flex;align-items:center;gap:6px;transition:background .15s}
 .feat-toggle:hover{background:#167474}
 .feat-badge{background:#e74c3c;color:#fff;border-radius:999px;font-size:.65rem;font-weight:700;padding:1px 5px;writing-mode:horizontal-tb;margin-bottom:4px}
-.feat-panel{position:fixed;right:0;top:0;bottom:0;width:270px;background:#fff;border-left:1px solid #E5E7EB;z-index:55;display:flex;flex-direction:column;padding:16px 14px 80px;box-shadow:-4px 0 16px rgba(0,0,0,.08);transform:translateX(100%);transition:transform .25s ease;overflow-y:auto}
-.feat-panel.open{transform:translateX(0)}
+.feat-panel{position:fixed;right:0;top:0;bottom:0;width:270px;background:#fff;border-left:1px solid #E5E7EB;z-index:55;display:none;flex-direction:column;padding:16px 14px 80px;box-shadow:-4px 0 16px rgba(0,0,0,.08);overflow-y:auto}
+.feat-panel.open{display:flex}
 .feat-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
 .feat-panel-title{font-size:.95rem;font-weight:700;color:#111827}
 .feat-close{background:none;border:none;cursor:pointer;color:#6b7280;font-size:1.1rem;line-height:1;padding:2px 6px;border-radius:6px;transition:background .12s}
@@ -106,6 +106,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:#fff;color:#333;height:
 .feat-desc{font-size:.75rem;color:#6b7280;line-height:1.45}
 .feat-reset{margin-top:4px;width:100%;background:#fff;border:1.5px solid #E5E7EB;border-radius:8px;padding:8px;font-size:.82rem;font-weight:600;color:#6b7280;cursor:pointer;transition:all .15s;font-family:inherit}
 .feat-reset:hover{border-color:#e74c3c;color:#e74c3c}
+.feat-param{margin:8px 0 10px}
+.feat-param label{display:flex;justify-content:space-between;font-size:.78rem;font-weight:600;color:#374151;margin-bottom:5px}
+.feat-param input{width:100%;accent-color:#1B8B8B}
 /* cam overlay */
 .cam-wrap{width:100%;max-width:600px;margin-bottom:12px}
 .cam-wrap img{width:100%;border-radius:10px;border:1px solid #E5E7EB}
@@ -122,7 +125,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#fff;color:#333;height:
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useRef, useCallback } = React;
+const { useState, useRef, useCallback, useEffect } = React;
 
 /* ── Advanced Features definition ── */
 const FEATURES = [
@@ -134,11 +137,7 @@ const FEATURES = [
 ];
 
 /* ── Mock data ── */
-const MOCK_HISTORY = [
-  { id:1, title:"Complete right hemithorax...", date:"4/20/2026", mode:"Doctor Assistant" },
-  { id:2, title:"Chest X-ray – Pneumonia", date:"4/18/2026", mode:"Standard" },
-  { id:3, title:"CT scan – Normal", date:"4/15/2026", mode:"Standard" },
-];
+const MOCK_HISTORY = [];
 const MODELS = [
   "Ensemble (Classification + VQA)",
   "TorchXRayVision (Classification only)",
@@ -178,7 +177,9 @@ const API = (window.__API_URL || "http://localhost:8000").replace(/\/$/, "");
 function BotBubble({ result, question, mode, activeFeats }) {
   const featNames = (activeFeats||[]).map(id => FEATURES.find(f=>f.id===id)?.name).filter(Boolean);
   const { label, confidence, ci, risk, vqa_answer, vqa_conf,
-          gradcam_b64, differential, longitudinal, report } = result;
+          gradcam_b64, gradcam_image, differential, longitudinal, report } = result;
+  const camSrc = gradcam_b64 || gradcam_image;
+  const answerText = vqa_answer || result.answer;
   return (
     <div className="bubble-bot">
       <h4>🩻 MedXplain Analysis</h4>
@@ -191,21 +192,21 @@ function BotBubble({ result, question, mode, activeFeats }) {
           <tr><td>Mode</td><td>{mode}</td></tr>
         </tbody></table>
       )}
-      {vqa_answer && (
+      {answerText && (
         <div className="vqa-section">
           <div style={{fontSize:'.8rem',color:'#6b7280',marginBottom:4}}>
             <b>Clinical Question:</b> <i>{question}</i>
           </div>
-          <div style={{fontSize:'.88rem'}}>{vqa_answer}</div>
+          <div style={{fontSize:'.88rem'}}>{answerText}</div>
           <div style={{fontSize:'.75rem',color:'#9ca3af',marginTop:4}}>
             VQA confidence: {(vqa_conf*100).toFixed(1)}%
           </div>
         </div>
       )}
-      {gradcam_b64 && (
+      {camSrc && (
         <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid #F3F4F6'}}>
           <div style={{fontSize:'.78rem',fontWeight:600,color:'#1B8B8B',marginBottom:6}}>🔥 Grad-CAM Explainability</div>
-          <img src={gradcam_b64} alt="Grad-CAM" style={{width:'100%',borderRadius:8,border:'1px solid #E5E7EB'}}/>
+          <img src={camSrc} alt="Grad-CAM" style={{width:'100%',borderRadius:8,border:'1px solid #E5E7EB'}}/>
         </div>
       )}
       {differential && differential.length > 0 && (
@@ -266,6 +267,9 @@ function App() {
   const [detect, setDetect]       = useState(DETECT[0]);
   const [featOpen, setFeatOpen]   = useState(false);
   const [activeFeats, setActiveFeats] = useState([]);  // array of feature ids
+  const [gradcamStrength, setGradcamStrength] = useState(0.45);
+  const [temperature, setTemperature] = useState(1.0);
+  const [maxTokens, setMaxTokens] = useState(64);
   const fileRef   = useRef();
   const bottomRef = useRef();
 
@@ -273,6 +277,34 @@ function App() {
     prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
   );
   const resetFeats = () => setActiveFeats([]);
+
+  const normalizeReport = (entry, index=0) => ({
+    id: entry.id || `${entry.date || 'report'}-${index}`,
+    title: entry.prediction || entry.result?.label || entry.result?.answer || "VQA Report",
+    date: entry.date || "",
+    mode: entry.mode || entry.result?.mode || "Stored",
+    question: entry.question || entry.result?.question || "",
+    result: entry.result || {
+      answer: entry.vqa_answer || "",
+      vqa_answer: entry.vqa_answer || "",
+      report: entry.report || "",
+      gradcam_b64: entry.gradcam_b64 || entry.gradcam_image || "",
+      gradcam_image: entry.gradcam_image || entry.gradcam_b64 || "",
+    },
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API}/reports?patient_id=default`)
+      .then(res => res.ok ? res.json() : [])
+      .then(items => {
+        if (!cancelled && Array.isArray(items)) {
+          setHistory(items.map(normalizeReport));
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const loadFile = useCallback((file) => {
     // Accept standard image types AND DICOM (.dcm has type "" or "application/dicom")
@@ -307,11 +339,21 @@ function App() {
       fd.append("feat_longit",  String(activeFeats.includes("longit")));
       fd.append("feat_oneclik", String(activeFeats.includes("report1")));
       fd.append("feat_diff",    String(activeFeats.includes("diff")));
+      fd.append("gradcam_strength", String(gradcamStrength));
+      fd.append("temperature", String(temperature));
+      fd.append("max_tokens", String(maxTokens));
       const res = await fetch(`${API}/api/analyze`, {method:"POST", body:fd});
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const result = await res.json();
       const title = result.label || "VQA Query";
-      setHistory(h => [{id:Date.now(), title, date:new Date().toLocaleDateString("en-US"), mode}, ...h.slice(0,9)]);
+      setHistory(h => [{
+        id: Date.now(),
+        title,
+        date: new Date().toLocaleDateString("en-US"),
+        mode,
+        question: q,
+        result,
+      }, ...h.slice(0,9)]);
       setChat(prev => [
         ...prev.filter(c => c.type !== "loading"),
         { type:"bot", result, question:q, mode, activeFeats:[...activeFeats] }
@@ -325,7 +367,24 @@ function App() {
       setLoading(false);
       setTimeout(() => bottomRef.current?.scrollIntoView({behavior:"smooth"}), 80);
     }
-  }, [image, question, chat, mode, model, activeFeats]);
+  }, [image, question, mode, model, activeFeats, gradcamStrength, temperature, maxTokens]);
+
+  const handleHistoryClick = useCallback((item) => {
+    const restored = normalizeReport(item);
+    setQuestion(restored.question || "");
+    setMode(restored.mode === "Stored" ? mode : restored.mode);
+    setChat([
+      ...(restored.question ? [{type:"user", text: restored.question}] : []),
+      {
+        type:"bot",
+        result: restored.result,
+        question: restored.question || restored.result?.question || "",
+        mode: restored.mode,
+        activeFeats: [],
+      }
+    ]);
+    setTimeout(() => bottomRef.current?.scrollIntoView({behavior:"smooth"}), 80);
+  }, [mode]);
 
   const handleNew = () => {
     setImage(null);
@@ -352,7 +411,7 @@ function App() {
         {history.length === 0
           ? <div className="hist-empty">No previous sessions yet.</div>
           : history.map(h => (
-            <div key={h.id} className="hist-item">
+            <div key={h.id} className="hist-item" onClick={() => handleHistoryClick(h)}>
               <div className="hist-title">{h.title}</div>
               <div className="hist-date">{h.date} · {h.mode}</div>
             </div>
@@ -507,6 +566,24 @@ function App() {
             <div className="feat-desc">{f.desc}</div>
           </div>
         ))}
+        <div className="feat-param">
+          <label><span>Grad-CAM strength</span><span>{gradcamStrength.toFixed(2)}</span></label>
+          <input type="range" min="0.1" max="0.9" step="0.05"
+                 value={gradcamStrength}
+                 onChange={e=>setGradcamStrength(Number(e.target.value))}/>
+        </div>
+        <div className="feat-param">
+          <label><span>Temperature</span><span>{temperature.toFixed(1)}</span></label>
+          <input type="range" min="0.1" max="2.0" step="0.1"
+                 value={temperature}
+                 onChange={e=>setTemperature(Number(e.target.value))}/>
+        </div>
+        <div className="feat-param">
+          <label><span>Max tokens</span><span>{maxTokens}</span></label>
+          <input type="range" min="16" max="128" step="8"
+                 value={maxTokens}
+                 onChange={e=>setMaxTokens(Number(e.target.value))}/>
+        </div>
         <button className="feat-reset" onClick={resetFeats}>↺ Reset All Features</button>
       </div>
 

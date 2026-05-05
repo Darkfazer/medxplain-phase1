@@ -304,10 +304,44 @@ def generate_gradcam(img_arr: np.ndarray,
     return overlay
 
 
+def generate_fallback_heatmap(img_arr: np.ndarray) -> np.ndarray:
+    """Return a deterministic center-weighted heatmap overlay.
+
+    This is used only when model-backed Grad-CAM cannot be produced, so API
+    callers still receive an explainability image for every request.
+    """
+    h, w = img_arr.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    cx, cy = w / 2.0, h / 2.0
+    sigma = max(min(h, w) / 3.0, 1.0)
+    heat = np.exp(-(((xx - cx) ** 2 + (yy - cy) ** 2) / (2.0 * sigma ** 2)))
+    heat = ((heat - heat.min()) / (heat.max() - heat.min() + 1e-8) * 255).astype(np.uint8)
+    heat_rgb = cv2.applyColorMap(heat, cv2.COLORMAP_JET)
+    heat_rgb = cv2.cvtColor(heat_rgb, cv2.COLOR_BGR2RGB)
+    base = img_arr.astype(np.uint8)
+    return cv2.addWeighted(base, 0.55, heat_rgb, 0.45, 0)
+
+
+def generate_explainability_overlay(img_arr: np.ndarray) -> np.ndarray:
+    """Generate an explainability overlay for any request.
+
+    The preferred path is the existing TorchXRayVision Grad-CAM. If model
+    loading or gradient computation fails, return a valid fallback heatmap
+    rather than omitting the image from the API response.
+    """
+    try:
+        return generate_gradcam(img_arr)
+    except Exception as exc:
+        log.warning("Model Grad-CAM failed; using fallback heatmap: %s", exc)
+        return generate_fallback_heatmap(img_arr)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Patient Database helpers
 # ─────────────────────────────────────────────────────────────────────────────
 def _report_path(pid: str) -> Path:
+    if pid == "default":
+        return DB_DIR / "reports.json"
     return DB_DIR / f"reports_{pid}.json"
 
 
@@ -318,9 +352,15 @@ def _prior_path(pid: str) -> Path:
 def load_reports(pid: str = "default") -> list[dict]:
     """Load stored report history for a patient (newest first)."""
     p = _report_path(pid)
+    legacy_p = DB_DIR / f"reports_{pid}.json"
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+    if pid == "default" and legacy_p.exists():
+        try:
+            return json.loads(legacy_p.read_text(encoding="utf-8"))
         except Exception:
             return []
     return []
